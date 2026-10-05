@@ -73,6 +73,14 @@ export async function POST(request: Request) {
   }
   const assignedUserId = context.profile.role === "salesperson" ? context.user.id
     : typeof body.assigned_user_id === "string" ? body.assigned_user_id : context.user.id;
+  let leadListId: string | null = null;
+  if (body.lead_list_id !== undefined) {
+    if (typeof body.lead_list_id !== "string") return apiError("Vælg en gyldig leadliste.");
+    const { data: leadList, error: listError } = await context.supabase.from("lead_lists")
+      .select("id").eq("id", body.lead_list_id).eq("team_id", context.profile.team_id).maybeSingle();
+    if (listError || !leadList) return apiError("Leadlisten blev ikke fundet eller er ikke tildelt dig.", listError ? 500 : 404);
+    leadListId = leadList.id;
+  }
   const { data, error } = await context.supabase.from("leads").insert({
     team_id: context.profile.team_id,
     company_name: companyName,
@@ -88,6 +96,7 @@ export async function POST(request: Request) {
     notes: typeof body.notes === "string" ? body.notes.slice(0, 5000) : "",
     status: isLeadStatus(body.status) ? body.status : "new",
     assigned_user_id: assignedUserId,
+    lead_list_id: leadListId,
     created_by: context.user.id,
   }).select().single();
   if (error) {

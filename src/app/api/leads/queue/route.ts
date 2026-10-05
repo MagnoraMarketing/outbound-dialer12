@@ -2,16 +2,19 @@ import { NextResponse } from "next/server";
 import { apiError, requireContext } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
 
-export async function GET() {
+export async function GET(request: Request) {
   const result = await requireContext();
   if ("response" in result) return result.response;
   const { context } = result;
+  const listId = new URL(request.url).searchParams.get("lead_list_id");
+  if (!listId) return NextResponse.json({ data: [] });
   const now = new Date().toISOString();
-  const { data, error } = await context.supabase.from("leads").select("*")
+  let query = context.supabase.from("leads").select("*")
     .is("deleted_at", null)
     .not("status", "in", '("do_not_call","wrong_number","converted")')
-    .or(`next_follow_up_at.is.null,next_follow_up_at.lte.${now}`)
-    .or(`assigned_user_id.is.null,assigned_user_id.eq.${context.user.id}`)
+    .or(`next_follow_up_at.is.null,next_follow_up_at.lte.${now}`);
+  if (listId) query = query.eq("lead_list_id", listId);
+  const { data, error } = await query
     .order("next_follow_up_at", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true })
     .limit(500);

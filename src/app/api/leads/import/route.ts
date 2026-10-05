@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
+import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
 
 const allowedFields = new Set([
@@ -21,18 +21,53 @@ function rowConstraintMessage(code: string | undefined) {
 export async function POST(request: Request) {
   const result = await requireContext();
   if ("response" in result) return result.response;
+  if (result.context.profile.role !== "admin") return apiError("Kun administratorer kan importere leads.", 403);
   const body = await readJson(request);
   if (!body || !Array.isArray(body.rows) || !body.mapping || typeof body.mapping !== "object") return apiError("CSV-data eller kolonnemapping mangler.");
   if (body.rows.length > 10_000) return apiError("Importen er begrænset til 10.000 rækker ad gangen.", 413);
   const rowOffset = typeof body.row_offset === "number" && Number.isInteger(body.row_offset) && body.row_offset >= 0
     ? body.row_offset : 0;
   const mapping = body.mapping as Record<string, unknown>;
+  if (typeof body.lead_list_id !== "string") return apiError("Vælg en kampagne og leadliste før import.");
+  if (typeof body.assigned_user_id !== "string") return apiError("Vælg den bruger, som skal have leadlisten.");
   const rows: Record<string, unknown>[] = [];
   const errors: { row: number; reason: string }[] = [];
   const phones = new Set<string>();
   const companies = new Set<string>();
   const sourceRowByPhone = new Map<string, number>();
   const { context } = result;
+  const { data: leadList, error: listError } = await context.supabase.from("lead_lists")
+    .select("id, campaign_id").eq("id", body.lead_list_id).eq("team_id", context.profile.team_id).maybeSingle();
+  if (listError || !leadList) return apiError("Leadlisten blev ikke fundet i dit team.", listError ? 500 : 404);
+  let assignedUser: { id: string };
+  try {
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin.from("profiles").select("id")
+      .eq("id", body.assigned_user_id).eq("team_id", context.profile.team_id).maybeSingle();
+    if (error || !data) return apiError("Den valgte bruger blev ikke fundet i dit team.", error ? 500 : 404);
+    assignedUser = data;
+    const { error: campaignAssignmentError } = await admin.from("campaign_assignments").upsert({
+      team_id: context.profile.team_id,
+      campaign_id: leadList.campaign_id,
+      user_id: assignedUser.id,
+    }, { onConflict: "team_id,campaign_id,user_id" });
+    if (campaignAssignmentError) {
+      console.error("Campaign assignment creation failed", campaignAssignmentError.message);
+      return apiError("Kampagnen kunne ikke tildeles brugeren.", 500);
+    }
+    const { error: listAssignmentError } = await admin.from("lead_list_assignments").upsert({
+      team_id: context.profile.team_id,
+      lead_list_id: leadList.id,
+      user_id: assignedUser.id,
+    }, { onConflict: "team_id,lead_list_id,user_id" });
+    if (listAssignmentError) {
+      console.error("Lead list assignment creation failed", listAssignmentError.message);
+      return apiError("Leadlisten kunne ikke tildeles brugeren.", 500);
+    }
+  } catch (error) {
+    console.error("Lead import admin setup failed", error);
+    return apiError("Import kræver, at SUPABASE_SERVICE_ROLE_KEY er konfigureret.", 503);
+  }
 
   for (const [index, raw] of body.rows.entries()) {
     const rowNumber = rowOffset + index + 2;
@@ -97,7 +132,8 @@ export async function POST(request: Request) {
     }).map((row) => ({
       ...row,
       team_id: context.profile.team_id,
-      assigned_user_id: context.user.id,
+      lead_list_id: leadList.id,
+      assigned_user_id: assignedUser.id,
       created_by: context.user.id,
       status: "new",
     }));

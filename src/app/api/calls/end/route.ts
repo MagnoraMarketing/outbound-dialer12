@@ -18,6 +18,9 @@ export async function POST(request: Request) {
   const { data: call, error } = await context.supabase.from("calls").select("*").eq("id", body.call_id).maybeSingle();
   if (error || !call) return apiError("Opkaldet blev ikke fundet.", error ? 500 : 404);
   if (call.user_id !== context.user.id) return apiError("Du kan kun afslutte dine egne opkald.", 403);
+  if (!call.lead_id && ["callback", "wrong_number"].includes(body.outcome)) {
+    return apiError("Callback og ugyldigt nummer kan kun registreres på et lead.");
+  }
 
   if (call.telnyx_call_id && ["queued", "initiated", "ringing", "answered"].includes(call.status)) {
     try {
@@ -42,6 +45,11 @@ export async function POST(request: Request) {
   if (updateError) {
     console.error("Call result update failed", updateError.message);
     return apiError("Opkaldsresultatet kunne ikke gemmes.", 500);
+  }
+
+  if (!call.lead_id) {
+    await writeAudit(context, "manual_call_ended", "call", call.id, { outcome, phone: call.phone });
+    return NextResponse.json({ success: true, status, outcome });
   }
 
   const leadStatus = outcome === "meeting_booked" ? "meeting_booked"

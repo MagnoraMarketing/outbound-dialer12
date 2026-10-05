@@ -5,7 +5,7 @@ A Danish-language B2B CRM and outbound calling workspace built with Next.js, Sup
 ## Run locally
 
 1. Install Node.js 20+ and dependencies with `npm install`.
-2. In the shared Supabase project, add `nordcall` to **Project Settings → API → Exposed schemas** (keep existing schemas), then apply `supabase/migrations/20261005000000_initial_schema.sql` for a new setup, followed by any newer migrations. Nordcall tables live in the separate `nordcall` schema. Nordcall signups are marked explicitly so the auth trigger creates `nordcall.profiles` only for Nordcall users.
+2. In the shared Supabase project, add `nordcall` to **Project Settings → API → Exposed schemas** (keep existing schemas), then apply `supabase/migrations/20261005000000_initial_schema.sql` for a new setup, followed by any newer migrations in timestamp order. The campaign/Dialpad migration is `20261005020000_campaigns_and_dialpad.sql`; `20261005030000_team_campaign_assignments.sql` adds admin-managed user assignments and access rules. Nordcall tables live in the separate `nordcall` schema. Nordcall signups are marked explicitly so the auth trigger creates `nordcall.profiles` only for Nordcall users.
 3. Copy `.env.example` to `.env.local`, and add the project URL and anon key. Configure Telnyx server-side variables before enabling outbound calls.
 4. In Supabase Authentication → URL Configuration, add `http://localhost:3000/auth/callback` as a Redirect URL for local testing, and enable email/password sign-in. On the shared Supabase project, preserve its existing Site URL and redirect entries. The first Nordcall user can sign up and create a team; that user becomes the team administrator.
 5. Run `npm run dev` and open `http://localhost:3000`.
@@ -16,6 +16,9 @@ A Danish-language B2B CRM and outbound calling workspace built with Next.js, Sup
 
 - Supabase email/password authentication, user profiles, teams, role-aware policies and server-side session refresh.
 - Lead list/search, lead creation, assignment, status updates and server-validated CSV import with duplicate detection.
+- Admin-managed campaigns and campaign-specific lead lists; admins can assign each to individual team members and import leads directly to a selected member.
+- The Opkald workspace filters its queue to the selected, assigned campaign lead list, supports manual dialing without a lead, and can create a confirmed lead in that list.
+- Manual Telnyx calls are stored in call history without creating placeholder leads.
 - Server-only Telnyx outbound call and hang-up requests, signed webhook verification, call records and outcomes.
 - Queue, callbacks, meetings and daily dashboard API surfaces.
 - SQL migration with indexes, audit events and Row Level Security policies.
@@ -28,7 +31,7 @@ The repository is configured for Next.js on Vercel in `vercel.json`. To deploy f
 
 Alternatively, from the repository root run `npx vercel login`, then `npx vercel link` to link the local checkout to your Vercel project. Run `npx vercel` for a preview deployment and `npx vercel --prod` for production.
 
-In Vercel, add the variables from `.env.example` under **Project → Settings → Environment Variables**. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required; add server-side Supabase and Telnyx variables only when those features are configured. Set `NEXT_PUBLIC_APP_URL` to the final public HTTPS URL (for example `https://app.example.dk`). Redeploy after changing environment variables.
+In Vercel, add the variables from `.env.example` under **Project → Settings → Environment Variables**. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required. Admin invitations, user/list assignments, and CSV lead imports also require the server-only `SUPABASE_SERVICE_ROLE_KEY`; add Telnyx variables only when telephony is configured. Set `NEXT_PUBLIC_APP_URL` to the final public HTTPS URL (for example `https://app.example.dk`). Redeploy after changing environment variables.
 
 To use a custom domain, open **Project → Settings → Domains** in Vercel, add your domain, and follow the DNS records Vercel displays at your DNS provider. After Vercel verifies it, set `NEXT_PUBLIC_APP_URL` to that domain and redeploy. In the shared Supabase project's Authentication → URL Configuration, preserve the existing **Site URL** and redirect entries; only add the exact Nordcall callback URL, `https://outbound-dialer12.vercel.app/auth/callback` (or `https://app.example.dk/auth/callback` for a custom domain), to **Redirect URLs**. Also add `http://localhost:3000/auth/callback` only if local development is needed. This allows Nordcall confirmation links without changing the default redirect used by other apps. Configure the Telnyx connection webhook as `https://app.example.dk/api/calls/webhook`, and set its Ed25519 webhook public key in `TELNYX_PUBLIC_KEY`.
 

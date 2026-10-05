@@ -13,20 +13,20 @@ export async function POST(request: Request) {
   try {
     const admin = createSupabaseAdminClient();
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: fullName, team_id: context.profile.team_id },
+      data: { full_name: fullName, team_id: context.profile.team_id, nordcall_app: true },
       redirectTo: `${process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? ""}/`,
     });
     if (error || !data.user) {
       console.error("Team invitation failed", error?.message);
       return apiError("Invitationen kunne ikke sendes. Kontrollér Supabase e-mailopsætningen.", 502);
     }
-    const { error: profileError } = await admin.from("profiles").update({
+    const { data: profile, error: profileError } = await admin.from("profiles").update({
       full_name: fullName,
       team_id: context.profile.team_id,
       role: "salesperson",
-    }).eq("id", data.user.id);
-    if (profileError) {
-      console.error("Invited user's team assignment failed", profileError.message);
+    }).eq("id", data.user.id).select("id").maybeSingle();
+    if (profileError || !profile) {
+      console.error("Invited user's team assignment failed", profileError?.message ?? "Profile not found");
       return apiError("Invitationen blev sendt, men teamtilknytningen fejlede. Kontakt administratoren.", 500);
     }
     await writeAudit(context, "team_member_invited", "profile", data.user.id, { email });

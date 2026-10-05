@@ -25,12 +25,18 @@ type DashboardData = {
   performance: { user_id: string; name: string; calls: number; meetings: number; talk_time: number }[];
   activity: { key: string; label: string; calls: number; connected: number }[];
 };
-type Call = { id: string; lead_id: string; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; leads?: { company_name: string; contact_person: string | null } };
+type Call = { id: string; lead_id: string | null; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; leads?: { company_name: string; contact_person: string | null } | null };
 type Callback = { id: string; lead_id: string; callback_at: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type Meeting = { id: string; meeting_at: string; meeting_type: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
-type TeamMember = { id: string; full_name: string; role: Profile["role"]; created_at: string };
+type TeamMember = {
+  id: string; full_name: string; role: Profile["role"]; created_at: string;
+  campaign_ids?: string[]; lead_list_ids?: string[];
+};
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
-type Page = "dashboard" | "leads" | "dialer" | "callbacks" | "meetings" | "history" | "import" | "team" | "settings";
+type Campaign = { id: string; name: string; created_at: string };
+type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
+type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
+type Page = "dashboard" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -45,6 +51,7 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "dashboard", title: "Overblik", icon: LayoutDashboard },
     { id: "leads", title: "Virksomheder", icon: Building2 },
     { id: "dialer", title: "Opkald", icon: PhoneCall },
+    { id: "dialpad", title: "Dialpad", icon: Phone },
     { id: "callbacks", title: "Callbacks", icon: CalendarClock },
     { id: "meetings", title: "Møder", icon: CalendarDays },
   ] },
@@ -127,6 +134,17 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [callbacks, setCallbacks] = useState<Callback[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [teamCampaigns, setTeamCampaigns] = useState<Campaign[]>([]);
+  const [teamLeadLists, setTeamLeadLists] = useState<LeadList[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [leadLists, setLeadLists] = useState<LeadList[]>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState("");
+  const [selectedLeadListId, setSelectedLeadListId] = useState("");
+  const [importAssignedUserId, setImportAssignedUserId] = useState("");
+  const [newCampaignName, setNewCampaignName] = useState("");
+  const [newLeadListName, setNewLeadListName] = useState("");
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [manualPhone, setManualPhone] = useState("");
   const [leadStatus, setLeadStatus] = useState("");
   const [leadFilters, setLeadFilters] = useState<LeadFilters>({
     city: "", industry: "", employees_min: "", employees_max: "", assigned_user_id: "",
@@ -135,6 +153,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [modal, setModal] = useState<"lead" | "callback" | "meeting" | "invite" | null>(null);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [activeCall, setActiveCall] = useState<Call | null>(null);
+  const [callStartBusy, setCallStartBusy] = useState(false);
   const [callStarted, setCallStarted] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [callNote, setCallNote] = useState("");
@@ -177,7 +196,9 @@ export function Workspace({ configured }: { configured: boolean }) {
           setTeam(members.data);
         }
       } else if (activePage === "dialer") {
-        const result = await api<{ data: Lead[] }>("/api/leads/queue");
+        const params = new URLSearchParams();
+        if (selectedLeadListId) params.set("lead_list_id", selectedLeadListId);
+        const result = await api<{ data: Lead[] }>(`/api/leads/queue?${params.toString()}`);
         setQueue(result.data);
         setActiveLead((current) => current && result.data.some((lead) => lead.id === current.id)
           ? current : result.data[0] ?? null);
@@ -191,15 +212,58 @@ export function Workspace({ configured }: { configured: boolean }) {
         const result = await api<{ data: Call[] }>("/api/calls");
         setCalls(result.data);
       } else if (activePage === "team") {
-        const result = await api<{ data: TeamMember[] }>("/api/team");
+        const result = await api<TeamAdminData>("/api/team");
         setTeam(result.data);
+        setTeamCampaigns(result.campaigns);
+        setTeamLeadLists(result.lead_lists);
       }
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Data kunne ikke indlæses.");
     } finally {
       setLoading(false);
     }
-  }, [leadFilters, leadStatus, leadsPage, profile]);
+  }, [leadFilters, leadStatus, leadsPage, profile, selectedLeadListId]);
+
+  useEffect(() => {
+    if (!user || !profile?.team_id || !["dialer", "import"].includes(page)) return;
+    let alive = true;
+    void Promise.all([
+      api<{ data: Campaign[] }>("/api/campaigns"),
+      page === "import" && profile.role === "admin" ? api<TeamAdminData>("/api/team") : Promise.resolve(null),
+    ]).then(([campaignResult, teamResult]) => {
+      if (!alive) return;
+      setCampaigns(campaignResult.data);
+      setSelectedCampaignId((current) => campaignResult.data.some((campaign) => campaign.id === current) ? current : "");
+      if (teamResult) {
+        setTeam(teamResult.data);
+        setTeamCampaigns(teamResult.campaigns);
+        setTeamLeadLists(teamResult.lead_lists);
+        setImportAssignedUserId((current) => teamResult.data.some((member) => member.id === current)
+          ? current : teamResult.data.some((member) => member.id === user.id)
+            ? user.id : teamResult.data[0]?.id ?? "");
+      }
+    }).catch((loadError) => {
+      if (alive) setError(loadError instanceof Error ? loadError.message : "Kampagner kunne ikke indlæses.");
+    });
+    return () => { alive = false; };
+  }, [user, profile?.team_id, profile?.role, page]);
+
+  useEffect(() => {
+    if (!user || !profile?.team_id || !selectedCampaignId) {
+      setLeadLists([]);
+      setSelectedLeadListId("");
+      return;
+    }
+    let alive = true;
+    void api<{ data: LeadList[] }>(`/api/campaigns/${selectedCampaignId}/lists`).then(({ data }) => {
+      if (!alive) return;
+      setLeadLists(data);
+      setSelectedLeadListId((current) => data.some((list) => list.id === current) ? current : "");
+    }).catch((loadError) => {
+      if (alive) setError(loadError instanceof Error ? loadError.message : "Leadlister kunne ikke indlæses.");
+    });
+    return () => { alive = false; };
+  }, [user, profile?.team_id, selectedCampaignId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -471,6 +535,7 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   async function beginCall() {
     if (!activeLead) return;
+    setCallStartBusy(true);
     setError("");
     try {
       const result = await api<{ data: Call }>("/api/calls/start", { method: "POST", body: JSON.stringify({ lead_id: activeLead.id }) });
@@ -482,6 +547,54 @@ export function Workspace({ configured }: { configured: boolean }) {
       setNotice("Opkaldet er startet.");
     } catch (callError) {
       setError(callError instanceof Error ? callError.message : "Opkaldet kunne ikke startes.");
+    } finally {
+      setCallStartBusy(false);
+    }
+  }
+
+  async function beginManualCall() {
+    const phone = manualPhone.trim();
+    if (!phone) {
+      setError("Indtast et telefonnummer.");
+      return;
+    }
+    setCallStartBusy(true);
+    setError("");
+    try {
+      const result = await api<{ data: Call }>("/api/calls/start", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+      setActiveCall(result.data);
+      setActiveLead(null);
+      setCallStarted(Date.now());
+      setElapsed(0);
+      setNotice("Opkaldet er startet.");
+    } catch (callError) {
+      setError(callError instanceof Error ? callError.message : "Opkaldet kunne ikke startes.");
+    } finally {
+      setCallStartBusy(false);
+    }
+  }
+
+  async function createDialerLead(input: { company_name: string; phone: string; contact_person: string; notes: string }): Promise<boolean> {
+    if (!selectedLeadListId) {
+      setError("Vælg en tildelt kampagne og leadliste, før du opretter et lead.");
+      return false;
+    }
+    if (!window.confirm(`Opret ${input.company_name.trim()} på den valgte leadliste?`)) return false;
+    try {
+      const { data } = await api<{ data: Lead }>("/api/leads", {
+        method: "POST",
+        body: JSON.stringify({ ...input, lead_list_id: selectedLeadListId }),
+      });
+      setActiveLead(data);
+      setQueue((current) => [data, ...current.filter((lead) => lead.id !== data.id)]);
+      setNotice("Leadet er oprettet og tilføjet til opkaldskøen.");
+      return true;
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Leadet kunne ikke oprettes.");
+      return false;
     }
   }
 
@@ -508,6 +621,10 @@ export function Workspace({ configured }: { configured: boolean }) {
       setCallStarted(null);
       setCallNote("");
       setCallbackAt("");
+      if (!activeCall.lead_id) {
+        setActiveLead(queue[0] ?? null);
+        return;
+      }
       const remaining = queue.filter((lead) => lead.id !== activeLead?.id);
       setQueue(remaining);
       setActiveLead(remaining[0] ?? null);
@@ -574,6 +691,14 @@ export function Workspace({ configured }: { configured: boolean }) {
       setError("Vælg kolonner for virksomhed og telefonnummer før import.");
       return;
     }
+    if (!selectedCampaignId || !selectedLeadListId) {
+      setError("Vælg eller opret en kampagne og leadliste før import.");
+      return;
+    }
+    if (!importAssignedUserId) {
+      setError("Vælg den bruger, som skal have de importerede leads.");
+      return;
+    }
     setCsvBusy(true);
     setCsvProgress(0);
     setCsvErrors([]);
@@ -585,7 +710,13 @@ export function Workspace({ configured }: { configured: boolean }) {
         const response = await fetch("/api/leads/import", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows: csvRows.slice(offset, offset + chunkSize), mapping: csvMapping, row_offset: offset }),
+          body: JSON.stringify({
+            rows: csvRows.slice(offset, offset + chunkSize),
+            mapping: csvMapping,
+            row_offset: offset,
+            lead_list_id: selectedLeadListId,
+            assigned_user_id: importAssignedUserId,
+          }),
         });
         const result = await response.json().catch(() => null) as {
           imported?: number;
@@ -615,6 +746,49 @@ export function Workspace({ configured }: { configured: boolean }) {
       setError(importError instanceof Error ? importError.message : "Importen fejlede.");
     } finally {
       setCsvBusy(false);
+    }
+  }
+
+  async function createCampaign() {
+    setCampaignBusy(true);
+    setError("");
+    try {
+      const { data } = await api<{ data: Campaign }>("/api/campaigns", {
+        method: "POST",
+        body: JSON.stringify({ name: newCampaignName }),
+      });
+      setCampaigns((current) => [data, ...current]);
+      setSelectedCampaignId(data.id);
+      setSelectedLeadListId("");
+      setNewCampaignName("");
+      setNotice("Kampagnen er oprettet.");
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Kampagnen kunne ikke oprettes.");
+    } finally {
+      setCampaignBusy(false);
+    }
+  }
+
+  async function createLeadList() {
+    if (!selectedCampaignId) {
+      setError("Vælg en kampagne først.");
+      return;
+    }
+    setCampaignBusy(true);
+    setError("");
+    try {
+      const { data } = await api<{ data: LeadList }>(`/api/campaigns/${selectedCampaignId}/lists`, {
+        method: "POST",
+        body: JSON.stringify({ name: newLeadListName }),
+      });
+      setLeadLists((current) => [data, ...current]);
+      setSelectedLeadListId(data.id);
+      setNewLeadListName("");
+      setNotice("Leadlisten er oprettet i kampagnen.");
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Leadlisten kunne ikke oprettes.");
+    } finally {
+      setCampaignBusy(false);
     }
   }
 
@@ -727,7 +901,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   }
 
   const pageTitle: Record<Page, string> = {
-    dashboard: "Overblik", leads: "Virksomheder", dialer: "Opkald", callbacks: "Callbacks",
+    dashboard: "Overblik", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
     meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", settings: "Indstillinger",
   };
 
@@ -742,15 +916,20 @@ export function Workspace({ configured }: { configured: boolean }) {
           <ChevronDown size={15} />
         </div>
         <nav className="side-nav" aria-label="Hovednavigation">
-          {navGroups.map((group) => <div className="nav-group" key={group.label}>
+          {navGroups.map((group) => {
+            const items = group.items.filter((item) =>
+              (item.id !== "import" || profile.role === "admin")
+              && (item.id !== "team" || profile.role !== "salesperson"));
+            return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
-            {group.items.map(({ id, title, icon: Icon }) => (
+            {items.map(({ id, title, icon: Icon }) => (
               <button key={id} className={`nav-item ${page === id ? "nav-active" : ""}`} onClick={() => { setPage(id); setMobileNav(false); }}>
                 <Icon size={17} strokeWidth={1.8} /><span>{title}</span>
                 {id === "callbacks" && dashboard?.callbacks ? <span className="nav-count">{dashboard.callbacks}</span> : null}
               </button>
             ))}
-          </div>)}
+          </div> : null;
+          })}
         </nav>
         <div className="sidebar-bottom">
           <div className="help-card"><span className="help-icon"><CircleHelp size={16} /></span><strong>Har du brug for en hånd?</strong><span>Vi er lige her, når du har brug for os.</span><a href="mailto:hej@nordcall.dk">Skriv til support <ArrowUpRight size={13} /></a></div>
@@ -775,10 +954,15 @@ export function Workspace({ configured }: { configured: boolean }) {
         </header>
         <div className="page-content">
           {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span><button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><X size={16} /></button></div>}
-          {page === "dashboard" && <DashboardView data={dashboard} loading={loading} name={greeting} setPage={setPage} onNewLead={() => setModal("lead")} />}
+          {page === "dashboard" && <DashboardView data={dashboard} loading={loading} name={greeting} role={profile.role} setPage={setPage} onNewLead={() => setModal("lead")} />}
           {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => setModal("lead")} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
             lead={activeLead} queueCount={queue.length} call={activeCall} elapsed={elapsed} callStarted={callStarted}
+            campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
+            onCampaign={(id) => { setSelectedCampaignId(id); setSelectedLeadListId(""); setQueue([]); setActiveLead(null); }}
+            onLeadList={(id) => { setSelectedLeadListId(id); setQueue([]); setActiveLead(null); }}
+            manualPhone={manualPhone} setManualPhone={setManualPhone} onManualCall={beginManualCall} callStartBusy={callStartBusy}
+            onCreateLead={createDialerLead}
             note={callNote} setNote={setCallNote} callbackAt={callbackAt} setCallbackAt={setCallbackAt}
             busy={outcomeBusy} onCall={beginCall} onOutcome={finishCall} onNext={advanceLead}
             onRefresh={() => { setActiveLead(null); void loadPageData("dialer"); }}
@@ -787,17 +971,42 @@ export function Workspace({ configured }: { configured: boolean }) {
               void openPlanner("meeting");
             }}
           />}
+          {page === "dialpad" && <DialpadView
+            phone={manualPhone} setPhone={setManualPhone} call={activeCall?.lead_id === null ? activeCall : null}
+            elapsed={elapsed} callStarted={callStarted} note={callNote} setNote={setCallNote}
+            busy={outcomeBusy} onCall={beginManualCall} onOutcome={finishCall}
+          />}
           {page === "callbacks" && <CallbacksView callbacks={callbacks} loading={loading} onComplete={completeCallback} onSchedule={() => void openPlanner("callback")} />}
           {page === "meetings" && <MeetingsView meetings={meetings} loading={loading} onBook={() => void openPlanner("meeting")} />}
           {page === "history" && <HistoryView calls={calls} loading={loading} onExport={() => exportCsv(calls.map((call) => ({
             ...call, company_name: call.leads?.company_name ?? "", contact_person: call.leads?.contact_person ?? "",
           })), "nordcall-opkald.csv")} />}
-          {page === "import" && <ImportView
+          {page === "import" && profile.role === "admin" && <ImportView
             headers={csvHeaders} rows={csvRows} mapping={csvMapping} errors={csvErrors} progress={csvProgress} busy={csvBusy}
+            campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
+            members={team} assignedUserId={importAssignedUserId} onAssignedUser={setImportAssignedUserId}
+            newCampaignName={newCampaignName} newLeadListName={newLeadListName} campaignBusy={campaignBusy}
+            onCampaign={setSelectedCampaignId} onLeadList={setSelectedLeadListId}
+            onNewCampaignName={setNewCampaignName} onNewLeadListName={setNewLeadListName}
+            onCreateCampaign={() => void createCampaign()} onCreateLeadList={() => void createLeadList()}
             fileRef={fileRef} onFile={readCsv} onMapping={(key, value) => setCsvMapping((current) => ({ ...current, [key]: value }))}
             onImport={importCsv} onDrop={(file) => readCsv(file)}
           />}
-          {page === "team" && <TeamView members={team} loading={loading} role={profile.role} onInvite={() => setModal("invite")} onRole={changeRole} />}
+          {page === "team" && <TeamView
+            members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
+            onInvite={() => setModal("invite")}
+            onSave={async (memberId, fullName, role, campaignIds, leadListIds) => {
+              try {
+                await api("/api/team", { method: "PATCH", body: JSON.stringify({
+                  user_id: memberId, full_name: fullName, role, campaign_ids: campaignIds, lead_list_ids: leadListIds,
+                }) });
+                setNotice("Brugerprofil og tildelinger er gemt.");
+                void loadPageData("team");
+              } catch (saveError) {
+                setError(saveError instanceof Error ? saveError.message : "Brugerens ændringer kunne ikke gemmes.");
+              }
+            }}
+          />}
           {page === "settings" && <SettingsView user={user} profile={profile} />}
         </div>
       </main>
@@ -848,8 +1057,8 @@ function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? "brand-compact" : ""}`}><span className="brand-mark"><span /><span /><span /></span><span className="brand-name">nordcall<span>.</span></span></div>;
 }
 
-function DashboardView({ data, loading, name, setPage, onNewLead }: {
-  data: DashboardData | null; loading: boolean; name: string; setPage: (page: Page) => void; onNewLead: () => void;
+function DashboardView({ data, loading, name, role, setPage, onNewLead }: {
+  data: DashboardData | null; loading: boolean; name: string; role: Profile["role"]; setPage: (page: Page) => void; onNewLead: () => void;
 }) {
   const metrics = [
     { label: "Opkald i dag", value: data?.calls ?? 0, icon: PhoneCall, tone: "blue", meta: `${data?.connected ?? 0} forbundne` },
@@ -905,7 +1114,7 @@ function DashboardView({ data, loading, name, setPage, onNewLead }: {
       <div className="panel quick-panel">
         <div className="panel-heading"><div><span className="panel-eyebrow">KOM HURTIGT I GANG</span><h2>Genveje</h2></div><Sparkles size={16} className="sparkle" /></div>
         <button className="quick-link" onClick={onNewLead}><span className="quick-icon quick-blue"><Plus size={16} /></span><span><strong>Tilføj virksomhed</strong><small>Opret et nyt lead</small></span><ArrowRight size={15} /></button>
-        <button className="quick-link" onClick={() => setPage("import")}><span className="quick-icon quick-green"><FileSpreadsheet size={16} /></span><span><strong>Importer leads</strong><small>Tilføj fra CSV-fil</small></span><ArrowRight size={15} /></button>
+        {role === "admin" && <button className="quick-link" onClick={() => setPage("import")}><span className="quick-icon quick-green"><FileSpreadsheet size={16} /></span><span><strong>Importer leads</strong><small>Tilføj fra CSV-fil</small></span><ArrowRight size={15} /></button>}
       </div>
     </section>
   </div>;
@@ -968,18 +1177,51 @@ function LeadsView({ leads, total, page, onPage, loading, status, setStatus, fil
   </div>;
 }
 
-function DialerView({ lead, queueCount, call, elapsed, callStarted, note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting }: {
+function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
+  onCampaign, onLeadList, manualPhone, setManualPhone, onManualCall, callStartBusy, onCreateLead,
+  note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting }: {
   lead: Lead | null; queueCount: number; call: Call | null; elapsed: number; callStarted: number | null; note: string; setNote: (value: string) => void;
+  campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
+  onCampaign: (id: string) => void; onLeadList: (id: string) => void;
+  manualPhone: string; setManualPhone: (phone: string) => void; onManualCall: () => void; callStartBusy: boolean;
+  onCreateLead: (input: { company_name: string; phone: string; contact_person: string; notes: string }) => Promise<boolean>;
   callbackAt: string; setCallbackAt: (value: string) => void; busy: boolean; onCall: () => void; onOutcome: (outcome: string) => void;
   onNext: () => void; onRefresh: () => void; onBookMeeting: () => void;
 }) {
   const [history, setHistory] = useState<Call[]>([]);
+  const [newLead, setNewLead] = useState({ company_name: "", phone: "", contact_person: "", notes: "" });
+  const [newLeadBusy, setNewLeadBusy] = useState(false);
   useEffect(() => { void api<{ data: Call[] }>("/api/calls").then(({ data }) => setHistory(data.slice(0, 5))).catch(() => undefined); }, [lead?.id, call?.id]);
   const awaitingOutcome = Boolean(call && ["completed", "busy", "failed", "no_answer", "cancelled"].includes(call.status) && !call.outcome);
   const active = Boolean(call && (["queued", "initiated", "ringing", "answered"].includes(call.status) || awaitingOutcome));
+  async function submitNewLead(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setNewLeadBusy(true);
+    try {
+      if (await onCreateLead(newLead)) setNewLead({ company_name: "", phone: "", contact_person: "", notes: "" });
+    } finally {
+      setNewLeadBusy(false);
+    }
+  }
   return <div className="view dialer-view">
     <div className="dialer-title"><div><span className="eyebrow">DIN NÆSTE GODE SAMTALE</span><h1>Opkald</h1><p>Fokus på relationen. Nordcall klarer resten.</p></div>
       <div className="queue-chip"><span className="queue-pulse" /> {queueCount} leads i kø <button aria-label="Hent opkaldskø" onClick={onRefresh}><ArrowDown size={14} /></button></div>
+    </div>
+    <div className="campaign-selectors panel">
+      <label>Kampagne<select value={selectedCampaignId} onChange={(event) => onCampaign(event.target.value)}>
+        <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+      </select></label>
+      <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
+        <option value="">Vælg leadliste …</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+      </select></label>
+      <span>Her vises kun kampagner og leadlister, som administratoren har tildelt dig.</span>
+    </div>
+    <div className="panel dialer-manual-call">
+      <div><span className="panel-eyebrow">MANUELT OPKALD</span><strong>Ring til et nummer uden for leadlisten</strong></div>
+      <label>Telefonnummer<input inputMode="tel" value={manualPhone} onChange={(event) => setManualPhone(event.target.value)} placeholder="+45 12 34 56 78" /></label>
+      <button className="button button-primary button-small" disabled={!manualPhone.trim() || callStartBusy || active} onClick={onManualCall}>
+        <PhoneCall size={14} /> {callStartBusy ? "Starter …" : "Ring manuelt"}
+      </button>
     </div>
     <div className="dialer-grid">
       <div className="panel current-lead-panel">
@@ -1012,7 +1254,28 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, note, setNot
           </div>
           <div className="dialer-notes"><div className="notes-heading"><span><MoreHorizontal size={16} /> Samtalenoter</span><small>Synkroniseres, når du vælger resultat</small></div><textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Skriv et par ord, du vil huske til næste gang …" /></div>
           <div className="dialer-bottom"><button className="subtle-action" onClick={onBookMeeting}><CalendarDays size={15} /> Planlæg møde</button><span className="secure-call"><CheckCircle2 size={14} /> Sikker forbindelse</span></div>
-        </> : <div className="empty-queue"><span className="empty-queue-icon"><Check size={28} /></span><h2>Du er up to date</h2><p>Der er ingen leads klar til opkald lige nu. Alle fremtidige callbacks holdes uden for køen.</p><button className="button button-secondary" onClick={onRefresh}><ArrowDown size={15} /> Opdatér køen</button></div>}
+        </> : call && !call.lead_id ? <div className="manual-call-active">
+          <span className="empty-queue-icon"><PhoneCall size={22} /></span><h2>Manuelt opkald</h2><strong>{call.phone}</strong>
+          <div className={`call-state state-${call.status}`}><span className="call-state-dot" />{awaitingOutcome ? "Opkald afsluttet — vælg resultat" : call.status === "ringing" ? "Ringer …" : call.status === "answered" ? "Forbundet" : "Opkald starter"}{!awaitingOutcome && <span className="timer-display">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>}</div>
+          <div className="outcome-grid">{[
+            ["interested", "Interesseret", "outcome-good"], ["meeting_booked", "Møde booket", "outcome-meeting"],
+            ["no_answer", "Intet svar", "outcome-muted"], ["not_interested", "Ikke interesseret", "outcome-muted"],
+          ].map(([value, label, tone]) => <button disabled={busy} key={value} className={`outcome-button ${tone}`} onClick={() => onOutcome(value)}>{label}</button>)}</div>
+          <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Noter til det manuelle opkald …" />
+        </div> : <div className="empty-queue">
+          <span className="empty-queue-icon"><Check size={28} /></span>
+          <h2>{!campaigns.length ? "Ingen kampagner tildelt" : !selectedCampaignId ? "Vælg din kampagne" : !selectedLeadListId ? "Vælg din leadliste" : "Du er up to date"}</h2>
+          <p>{!campaigns.length ? "Bed din administrator om at tildele dig en kampagne." : !selectedLeadListId ? "Vælg den kampagne og leadliste, du skal ringe fra. Du kan også ringe manuelt til et nummer ovenfor." : "Der er ingen leads klar til opkald lige nu. Alle fremtidige callbacks holdes uden for køen."}</p>
+          {selectedLeadListId && <button className="button button-secondary" onClick={onRefresh}><ArrowDown size={15} /> Opdatér køen</button>}
+          {selectedLeadListId && <form className="dialer-create-lead" onSubmit={(event) => void submitNewLead(event)}>
+            <span className="panel-eyebrow">TILFØJ ET LEAD TIL DEN VALGTE LISTE</span>
+            <label>Virksomhed *<input required maxLength={200} value={newLead.company_name} onChange={(event) => setNewLead({ ...newLead, company_name: event.target.value })} placeholder="Virksomhedens navn" /></label>
+            <label>Telefonnummer *<input required inputMode="tel" value={newLead.phone} onChange={(event) => setNewLead({ ...newLead, phone: event.target.value })} placeholder="+45 12 34 56 78" /></label>
+            <label>Kontaktperson<input maxLength={150} value={newLead.contact_person} onChange={(event) => setNewLead({ ...newLead, contact_person: event.target.value })} placeholder="Navn (valgfrit)" /></label>
+            <label>Noter<textarea rows={2} maxLength={5000} value={newLead.notes} onChange={(event) => setNewLead({ ...newLead, notes: event.target.value })} placeholder="Et par nyttige oplysninger (valgfrit)" /></label>
+            <button className="button button-primary" disabled={newLeadBusy}><Plus size={15} /> {newLeadBusy ? "Opretter …" : "Opret lead og tilføj til køen"}</button>
+          </form>}
+        </div>}
       </div>
       <aside className="dialer-side">
         <div className="panel context-panel"><div className="panel-heading"><div><span className="panel-eyebrow">VIRKSOMHEDSINFO</span><h2>Overblik</h2></div><Building2 size={17} className="heading-muted" /></div>
@@ -1023,6 +1286,45 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, note, setNot
           {history.length ? history.map((item) => <div className="recent-call" key={item.id}><span className={`recent-call-icon ${item.outcome === "meeting_booked" ? "recent-good" : ""}`}><Phone size={14} /></span><span><strong>{item.leads?.company_name || "Virksomhed"}</strong><small>{formatDate(item.started_at)} · {formatTime(item.started_at)}</small></span><span className="recent-duration">{formatDuration(item.duration_seconds)}</span></div>) : <EmptyInline title="Ingen samtaler endnu" description="Din opkaldshistorik vises her." />}
         </div>
         <div className="compliance-card"><span><CheckCircle2 size={16} /></span><p><strong>Gode opkald starter med respekt.</strong> Husk altid at præsentere dig og respektere et nej.</p></div>
+      </aside>
+    </div>
+  </div>;
+}
+
+function DialpadView({ phone, setPhone, call, elapsed, callStarted, note, setNote, busy, onCall, onOutcome }: {
+  phone: string; setPhone: (value: string) => void; call: Call | null; elapsed: number; callStarted: number | null;
+  note: string; setNote: (value: string) => void; busy: boolean; onCall: () => void; onOutcome: (value: string) => void;
+}) {
+  const [history, setHistory] = useState<Call[]>([]);
+  useEffect(() => {
+    void api<{ data: Call[] }>("/api/calls").then(({ data }) => setHistory(data.filter((item) => !item.lead_id).slice(0, 6))).catch(() => undefined);
+  }, [call?.id]);
+  const awaitingOutcome = Boolean(call && ["completed", "busy", "failed", "no_answer", "cancelled"].includes(call.status) && !call.outcome);
+  const active = Boolean(call && (["queued", "initiated", "ringing", "answered"].includes(call.status) || awaitingOutcome));
+  return <div className="view dialpad-view">
+    <div className="page-heading"><div><span className="eyebrow">RING TIL ET FRIT NUMMER</span><h1>Dialpad</h1><p>Indtast et nummer, og ring via din Telnyx-forbindelse.</p></div><span className="secure-tag"><CheckCircle2 size={14} /> Direkte opkald</span></div>
+    <div className="dialpad-layout">
+      <section className="panel dialpad-panel">
+        <div className="panel-heading"><div><span className="panel-eyebrow">TELEFONNUMMER</span><h2>Manuelt opkald</h2></div><PhoneCall size={17} className="heading-muted" /></div>
+        {active && call ? <>
+          <div className={`call-state state-${call.status}`}><span className="call-state-dot" />{awaitingOutcome ? "Opkald afsluttet — vælg resultat" : call.status === "ringing" ? "Ringer …" : call.status === "answered" ? "Forbundet" : "Opkald starter"}{!awaitingOutcome && <span className="timer-display">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>}</div>
+          {callStarted && !awaitingOutcome && <div className="call-wave"><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /><i /></div>}
+          <strong className="manual-call-number">{call.phone}</strong>
+          <div className="dialpad-outcomes">{[
+            ["answered", "Besvaret"], ["no_answer", "Intet svar"], ["busy", "Optaget"], ["failed", "Mislykket"],
+          ].map(([value, label]) => <button className="button button-secondary" key={value} disabled={busy} onClick={() => onOutcome(value)}>{label}</button>)}</div>
+          <label className="manual-call-notes">Samtalenoter<textarea rows={4} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Noter om opkaldet …" /></label>
+        </> : <>
+          <input className="dialpad-number" aria-label="Telefonnummer" type="tel" inputMode="tel" autoComplete="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+45 12 34 56 78" />
+          <div className="dialpad-keys">{["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫"].map((digit) =>
+            <button key={digit} aria-label={digit === "⌫" ? "Slet sidste ciffer" : `Indtast ${digit}`} onClick={() => setPhone(digit === "⌫" ? phone.slice(0, -1) : digit === "+" && phone.length ? phone : `${phone}${digit}`)}>{digit}</button>,
+          )}</div>
+          <button className="button button-primary button-wide dialpad-call-button" disabled={!phone.trim()} onClick={onCall}><PhoneCall size={17} /> Ring op via Telnyx</button>
+        </>}
+        <p className="dialpad-disclaimer">Opkaldet går til et rigtigt telefonnummer og kan medføre Telnyx-forbrug.</p>
+      </section>
+      <aside className="panel dialpad-history"><div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Manuelle opkald</h2></div><Clock3 size={16} className="heading-muted" /></div>
+        {history.length ? history.map((item) => <div className="recent-call" key={item.id}><span className="recent-call-icon"><Phone size={14} /></span><span><strong>{item.phone}</strong><small>{formatDate(item.started_at)} · {formatTime(item.started_at)}</small></span><span className="recent-duration">{formatDuration(item.duration_seconds)}</span></div>) : <EmptyInline title="Ingen manuelle opkald" description="Opkald fra Dialpad vises her." />}
       </aside>
     </div>
   </div>;
@@ -1061,14 +1363,22 @@ function HistoryView({ calls, loading, onExport }: { calls: Call[]; loading: boo
     <div className="page-heading"><div><span className="eyebrow">ALLE DINE SAMTALER, SAMLET</span><h1>Opkaldshistorik</h1><p>Et godt overblik gør hver næste samtale lidt bedre.</p></div><button className="button button-secondary" onClick={onExport}><ArrowDown size={15} /> Eksportér</button></div>
     <div className="table-card"><div className="table-caption"><span>{calls.length} seneste opkald</span><button className="filter-more"><Filter size={15} /> Filtre</button></div>
       <div className="table-scroll"><table><thead><tr><th>VIRKSOMHED</th><th>TELEFON</th><th>DATO & TID</th><th>VARIGHED</th><th>RESULTAT</th></tr></thead><tbody>
-        {calls.map((call) => <tr key={call.id}><td><div className="company-cell"><span className="company-avatar company-1">{initials(call.leads?.company_name || "V")}</span><span><strong>{call.leads?.company_name || "Virksomhed slettet"}</strong><small>{call.leads?.contact_person || "—"}</small></span></div></td><td>{call.phone}</td><td>{formatDate(call.started_at, { day: "numeric", month: "short", year: "numeric" })}<small className="table-sub">{formatTime(call.started_at)}</small></td><td>{formatDuration(call.duration_seconds)}</td><td><span className={`status-pill status-${call.outcome || call.status}`}>{statuses[call.outcome || call.status] || call.outcome || call.status}</span></td></tr>)}
+        {calls.map((call) => <tr key={call.id}><td><div className="company-cell"><span className="company-avatar company-1">{initials(call.leads?.company_name || call.phone)}</span><span><strong>{call.leads?.company_name || (call.lead_id ? "Virksomhed slettet" : "Manuelt opkald")}</strong><small>{call.leads?.contact_person || (!call.lead_id ? call.phone : "—")}</small></span></div></td><td>{call.phone}</td><td>{formatDate(call.started_at, { day: "numeric", month: "short", year: "numeric" })}<small className="table-sub">{formatTime(call.started_at)}</small></td><td>{formatDuration(call.duration_seconds)}</td><td><span className={`status-pill status-${call.outcome || call.status}`}>{statuses[call.outcome || call.status] || call.outcome || call.status}</span></td></tr>)}
         {!calls.length && <tr><td colSpan={5}><EmptyInline title={loading ? "Henter opkald …" : "Ingen opkald endnu"} description="Dine opkald vises her, når du har haft din første samtale." /></td></tr>}
       </tbody></table></div></div>
   </div>;
 }
 
-function ImportView({ headers, rows, mapping, errors, progress, busy, fileRef, onFile, onMapping, onImport, onDrop }: {
+function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
+  members, assignedUserId, onAssignedUser, newCampaignName, newLeadListName, campaignBusy, onCampaign, onLeadList, onNewCampaignName, onNewLeadListName,
+  onCreateCampaign, onCreateLeadList, fileRef, onFile, onMapping, onImport, onDrop }: {
   headers: string[]; rows: CsvRow[]; mapping: Partial<Record<CsvField, string>>; errors: { row: number; reason: string }[];
+  campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
+  members: TeamMember[]; assignedUserId: string; onAssignedUser: (id: string) => void;
+  newCampaignName: string; newLeadListName: string; campaignBusy: boolean;
+  onCampaign: (id: string) => void; onLeadList: (id: string) => void;
+  onNewCampaignName: (value: string) => void; onNewLeadListName: (value: string) => void;
+  onCreateCampaign: () => void; onCreateLeadList: () => void;
   progress: number; busy: boolean; fileRef: React.RefObject<HTMLInputElement | null>; onFile: (file?: File) => void;
   onMapping: (key: CsvField, value: string) => void; onImport: () => void; onDrop: (file: File) => void;
 }) {
@@ -1084,6 +1394,21 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, fileRef, o
         <span className="upload-icon"><FileSpreadsheet size={23} /></span><strong>Slip din CSV-fil her</strong><span>eller <u>vælg en fil fra din computer</u></span><small>CSV · Op til 10.000 virksomheder · UTF-8</small>
       </button> : <div className="import-content">
         <div className="import-file-row"><span className="upload-icon upload-icon-small"><FileSpreadsheet size={18} /></span><span><strong>{rows.length.toLocaleString("da-DK")} rækker fundet</strong><small>{headers.length} kolonner · CSV-fil</small></span><button className="text-button" onClick={() => fileRef.current?.click()}>Vælg en anden fil</button><input ref={fileRef} hidden type="file" accept=".csv,text/csv" onChange={(event) => onFile(event.target.files?.[0])} /></div>
+        <div className="campaign-import panel">
+          <div><span className="panel-eyebrow">ORGANISÉR DIN LEADLISTE</span><h2>Vælg kampagne og leadliste</h2><p>Alle importerede leads knyttes til den valgte liste.</p></div>
+          <label>Kampagne<select value={selectedCampaignId} onChange={(event) => onCampaign(event.target.value)}>
+            <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+          </select></label>
+          <div className="campaign-create-row"><input value={newCampaignName} onChange={(event) => onNewCampaignName(event.target.value)} maxLength={120} placeholder="Ny kampagnes navn" /><button className="button button-secondary button-small" onClick={onCreateCampaign} disabled={campaignBusy || newCampaignName.trim().length < 2}>Opret kampagne</button></div>
+          <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
+            <option value="">Vælg leadliste …</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+          </select></label>
+          <div className="campaign-create-row"><input value={newLeadListName} onChange={(event) => onNewLeadListName(event.target.value)} maxLength={120} placeholder="Ny leadlistes navn" disabled={!selectedCampaignId} /><button className="button button-secondary button-small" onClick={onCreateLeadList} disabled={campaignBusy || !selectedCampaignId || newLeadListName.trim().length < 2}>Opret leadliste</button></div>
+          <label className="import-assignee">Tildel leadlisten til<select value={assignedUserId} onChange={(event) => onAssignedUser(event.target.value)}>
+            <option value="">Vælg teammedlem …</option>{members.map((member) => <option value={member.id} key={member.id}>{member.full_name || "Teammedlem"} · {friendlyRole(member.role)}</option>)}
+          </select></label>
+          <p className="assignment-note">Importerede leads tildeles denne bruger og bliver kun synlige for vedkommende samt teamets ledere.</p>
+        </div>
         <div className="mapping-header"><div><h2>Match dine kolonner</h2><p>Vælg hvilken CSV-kolonne, der svarer til hvert felt.</p></div><span className="match-count">{Object.values(mapping).filter(Boolean).length} felter matchet</span></div>
         <div className="mapping-grid">{csvFields.map((field) => <label className="mapping-row" key={field.key}><span>{field.label}{["company_name", "phone"].includes(field.key) && <i> * </i>}</span><ArrowRight size={14} /><select value={mapping[field.key] || ""} onChange={(event) => onMapping(field.key, event.target.value)}><option value="">Spring over</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div>
         <div className="preview-table"><div className="preview-heading"><strong>Forhåndsvisning</strong><span>De første 5 rækker</span></div><div className="table-scroll"><table><thead><tr>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <th key={field.key}>{field.label}</th>)}</tr></thead><tbody>{rows.slice(0, 5).map((row, index) => <tr key={index}>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <td key={field.key}>{row[mapping[field.key]!] || "—"}</td>)}</tr>)}</tbody></table></div></div>
@@ -1096,17 +1421,68 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, fileRef, o
   </div>;
 }
 
-function TeamView({ members, loading, role, onInvite, onRole }: {
-  members: TeamMember[]; loading: boolean; role: Profile["role"]; onInvite: () => void; onRole: (userId: string, role: string) => void;
+function TeamView({ members, loading, role, campaigns, leadLists, onInvite, onSave }: {
+  members: TeamMember[]; loading: boolean; role: Profile["role"]; campaigns: Campaign[]; leadLists: LeadList[];
+  onInvite: () => void;
+  onSave: (userId: string, fullName: string, role: Profile["role"], campaignIds: string[], leadListIds: string[]) => void;
 }) {
   return <div className="view">
-    <div className="page-heading"><div><span className="eyebrow">BEDRE SAMTALER, SAMMEN</span><h1>Dit team</h1><p>Et godt team gør hver samtale lidt bedre.</p></div>{role === "admin" && <button className="button button-primary" onClick={onInvite}><Plus size={16} /> Invitér kollega</button>}</div>
+    <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Brugere og tildelinger</h1><p>Administrér teamets profiler, kampagner og leadlister ét sted.</p></div>{role === "admin" && <button className="button button-primary" onClick={onInvite}><Plus size={16} /> Invitér kollega</button>}</div>
     <div className="team-summary"><div className="team-summary-main"><span className="team-summary-icon"><Users size={18} /></span><div><strong>{members.length} {members.length === 1 ? "kollega" : "kolleger"}</strong><span>Samlet om de gode samtaler</span></div></div><span className="secure-tag"><CheckCircle2 size={14} /> Privat team</span></div>
-    <div className="team-member-list">{members.map((member, index) => <div className="panel member-card" key={member.id}><div className={`avatar avatar-${index % 4}`}>{initials(member.full_name || "S")}</div><span className="member-info"><strong>{member.full_name || "Nyt teammedlem"}</strong><small>{friendlyRole(member.role)}</small></span><span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span>{role === "admin" && member.role !== "admin" ? <select className="member-role-select" value={member.role} aria-label={`Rolle for ${member.full_name}`} onChange={(event) => onRole(member.id, event.target.value)}><option value="salesperson">Sælger</option><option value="manager">Leder</option></select> : <span className="member-online"><i /> Aktiv</span>}</div>)}
-      {!members.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dit team begynder med dig" description="Flere teammedlemmer kan oprettes via Supabase Auth og tildeles til dit team af en administrator." />}</div>}
+    {role === "admin" && !campaigns.length && !loading && <div className="panel admin-setup-note">Opret først kampagner og leadlister under <strong>Importer leads</strong>. Her kan du derefter tildele dem til enkelte brugere.</div>}
+    <div className="team-member-list">{members.map((member, index) => role === "admin"
+      ? <AdminTeamMember key={member.id} member={member} index={index} campaigns={campaigns} leadLists={leadLists} onSave={onSave} />
+      : <div className="panel member-card" key={member.id}><div className={`avatar avatar-${index % 4}`}>{initials(member.full_name || "S")}</div><span className="member-info"><strong>{member.full_name || "Nyt teammedlem"}</strong><small>{friendlyRole(member.role)}</small></span><span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span><span className="member-online"><i /> Aktiv</span></div>)}
+      {!members.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dit team begynder med dig" description="Invitér teammedlemmer for at tildele kampagner og leadlister." />}</div>}
     </div>
-    <div className="privacy-foot"><CheckCircle2 size={14} /> Dit team kan kun se de leads, det har adgang til. Rolleændringer kræver administratoradgang.</div>
+    <div className="privacy-foot"><CheckCircle2 size={14} /> Sælgere får kun adgang til tildelte kampagner, leadlister og leads. Rolleændringer kræver administratoradgang.</div>
   </div>;
+}
+
+function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
+  member: TeamMember; index: number; campaigns: Campaign[]; leadLists: LeadList[];
+  onSave: (userId: string, fullName: string, role: Profile["role"], campaignIds: string[], leadListIds: string[]) => void;
+}) {
+  const [fullName, setFullName] = useState(member.full_name);
+  const [role, setRole] = useState(member.role);
+  const [campaignIds, setCampaignIds] = useState(member.campaign_ids ?? []);
+  const [leadListIds, setLeadListIds] = useState(member.lead_list_ids ?? []);
+  useEffect(() => {
+    setFullName(member.full_name);
+    setRole(member.role);
+    setCampaignIds(member.campaign_ids ?? []);
+    setLeadListIds(member.lead_list_ids ?? []);
+  }, [member]);
+  const toggle = (ids: string[], setIds: (next: string[]) => void, id: string) => {
+    setIds(ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
+  };
+  return <section className="panel admin-member-card">
+    <div className="admin-member-heading">
+      <div className={`avatar avatar-${index % 4}`}>{initials(fullName || "S")}</div>
+      <label>Navn<input maxLength={120} value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
+      <label>Rolle<select className="member-role-select" value={role} onChange={(event) => setRole(event.target.value as Profile["role"])}>
+        <option value="salesperson">Sælger</option><option value="manager">Leder</option><option value="admin">Administrator</option>
+      </select></label>
+      <span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span>
+    </div>
+    <div className="member-assignment-grid">
+      <fieldset><legend>Kampagner</legend>
+        {campaigns.length ? campaigns.map((campaign) => <label key={campaign.id}>
+          <input type="checkbox" checked={campaignIds.includes(campaign.id)} onChange={() => toggle(campaignIds, setCampaignIds, campaign.id)} />
+          {campaign.name}
+        </label>) : <small>Ingen kampagner oprettet endnu.</small>}
+      </fieldset>
+      <fieldset><legend>Leadlister</legend>
+        {leadLists.length ? leadLists.map((list) => <label key={list.id}>
+          <input type="checkbox" checked={leadListIds.includes(list.id)} onChange={() => toggle(leadListIds, setLeadListIds, list.id)} />
+          {list.name} · {campaigns.find((campaign) => campaign.id === list.campaign_id)?.name ?? "Kampagne"}
+        </label>) : <small>Leadlister vises, når de er oprettet.</small>}
+      </fieldset>
+    </div>
+    <div className="admin-member-footer"><span>{campaignIds.length} kampagner · {leadListIds.length} leadlister tildelt</span>
+      <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds)}>Gem ændringer</button>
+    </div>
+  </section>;
 }
 
 function SettingsView({ user, profile }: { user: User; profile: Profile }) {
