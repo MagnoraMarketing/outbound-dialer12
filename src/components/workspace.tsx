@@ -278,7 +278,7 @@ export function Workspace({ configured }: { configured: boolean }) {
           email,
           password,
           options: {
-            data: { full_name: fullName },
+            data: { full_name: fullName, nordcall_app: true },
             emailRedirectTo: `${window.location.origin}/auth/callback`,
           },
         });
