@@ -7,6 +7,17 @@ const allowedFields = new Set([
   "address", "city", "industry", "employee_count", "notes",
 ]);
 
+function isRowConstraintError(code: string | undefined) {
+  return ["22001", "22003", "22P02", "23502", "23505", "23514"].includes(code ?? "");
+}
+
+function rowConstraintMessage(code: string | undefined) {
+  if (code === "23505") return "Virksomheden eller telefonnummeret findes allerede.";
+  if (code === "22001") return "Et felt indeholder for mange tegn.";
+  if (code === "23502") return "Et obligatorisk felt mangler.";
+  return "Et af datafelterne har en ugyldig værdi.";
+}
+
 export async function POST(request: Request) {
   const result = await requireContext();
   if ("response" in result) return result.response;
@@ -76,7 +87,7 @@ export async function POST(request: Request) {
     }
     const existingPhones = new Set((phoneResult.data ?? []).map((item) => item.phone));
     const existingCompanies = new Set((companyResult.data ?? []).map((item) => item.company_name.toLocaleLowerCase("da-DK")));
-    const fresh = chunk.filter((row, localIndex) => {
+    const fresh: Record<string, unknown>[] = chunk.filter((row, localIndex) => {
       const duplicate = existingPhones.has(row.phone) || existingCompanies.has((row.company_name as string).toLocaleLowerCase("da-DK"));
       if (duplicate) errors.push({
         row: sourceRowByPhone.get(row.phone as string) ?? rowOffset + offset + localIndex + 2,
@@ -91,12 +102,39 @@ export async function POST(request: Request) {
       status: "new",
     }));
     if (!fresh.length) continue;
-    const { data, error } = await context.supabase.from("leads").insert(fresh).select("id");
-    if (error) {
-      console.error("Lead import insert failed", error.message);
-      return NextResponse.json({ error: "Importen blev delvist gennemført.", imported: inserted, errors }, { status: 500 });
+    async function insertWithIsolation(batch: typeof fresh): Promise<boolean> {
+      if (!batch.length) return true;
+      const { data, error } = await context.supabase.from("leads").insert(batch).select("id");
+      if (!error) {
+        inserted += data.length;
+        return true;
+      }
+      console.error("Lead import insert failed", { code: error.code, message: error.message, rows: batch.length });
+      if (isRowConstraintError(error.code)) {
+        if (batch.length === 1) {
+          errors.push({
+            row: sourceRowByPhone.get(batch[0].phone as string) ?? 0,
+            reason: rowConstraintMessage(error.code),
+          });
+          return true;
+        }
+        const midpoint = Math.floor(batch.length / 2);
+        const firstSucceeded = await insertWithIsolation(batch.slice(0, midpoint));
+        if (!firstSucceeded) return false;
+        return insertWithIsolation(batch.slice(midpoint));
+      }
+      return false;
     }
-    inserted += data.length;
+
+    const succeeded = await insertWithIsolation(fresh);
+    if (!succeeded) {
+      return NextResponse.json({
+        error: "Importen blev stoppet af en databasefejl. Allerede importerede rækker er gemt; se antal og rækkefejl nedenfor.",
+        imported: inserted,
+        rejected: errors.length,
+        errors,
+      }, { status: 500 });
+    }
   }
   await writeAudit(context, "imported", "lead", null, { imported: inserted, rejected: errors.length });
   return NextResponse.json({ imported: inserted, rejected: errors.length, errors });

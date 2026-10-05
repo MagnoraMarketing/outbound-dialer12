@@ -582,10 +582,28 @@ export function Workspace({ configured }: { configured: boolean }) {
     const chunkSize = 250;
     try {
       for (let offset = 0; offset < csvRows.length; offset += chunkSize) {
-        const result = await api<{ imported: number; errors: { row: number; reason: string }[] }>("/api/leads/import", {
+        const response = await fetch("/api/leads/import", {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ rows: csvRows.slice(offset, offset + chunkSize), mapping: csvMapping, row_offset: offset }),
         });
+        const result = await response.json().catch(() => null) as {
+          imported?: number;
+          errors?: { row: number; reason: string }[];
+          error?: string;
+        } | null;
+        if (!response.ok) {
+          imported += result?.imported ?? 0;
+          allErrors.push(...(result?.errors ?? []));
+          setCsvErrors(allErrors);
+          if (imported > 0) setNotice(`${imported} virksomheder blev importeret, før importen blev stoppet.`);
+          setError(result?.error ?? "Importen blev stoppet. Kontrollér fejlene, før du prøver igen.");
+          void loadPageData("leads");
+          return;
+        }
+        if (typeof result?.imported !== "number" || !Array.isArray(result.errors)) {
+          throw new Error("Importserveren returnerede et ugyldigt svar.");
+        }
         imported += result.imported;
         allErrors.push(...result.errors);
         setCsvProgress(Math.min(100, Math.round(((offset + chunkSize) / csvRows.length) * 100)));
