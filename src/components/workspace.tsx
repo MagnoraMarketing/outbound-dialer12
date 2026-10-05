@@ -171,6 +171,12 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [meetingNote, setMeetingNote] = useState("");
   const [inviteError, setInviteError] = useState("");
   const [leadForm, setLeadForm] = useState({ company_name: "", phone: "", contact_person: "", cvr: "", email: "", website: "", address: "", city: "", industry: "", employee_count: "", notes: "" });
+  const [leadFormCampaigns, setLeadFormCampaigns] = useState<Campaign[]>([]);
+  const [leadFormLists, setLeadFormLists] = useState<LeadList[]>([]);
+  const [leadFormCampaignId, setLeadFormCampaignId] = useState("");
+  const [leadFormLeadListId, setLeadFormLeadListId] = useState("");
+  const [leadFormNewListName, setLeadFormNewListName] = useState("");
+  const [leadFormListBusy, setLeadFormListBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadPageData = useCallback(async (activePage: Page, q = "") => {
@@ -197,6 +203,7 @@ export function Workspace({ configured }: { configured: boolean }) {
         }
       } else if (activePage === "dialer") {
         const params = new URLSearchParams();
+        if (selectedCampaignId) params.set("campaign_id", selectedCampaignId);
         if (selectedLeadListId) params.set("lead_list_id", selectedLeadListId);
         const result = await api<{ data: Lead[] }>(`/api/leads/queue?${params.toString()}`);
         setQueue(result.data);
@@ -222,7 +229,7 @@ export function Workspace({ configured }: { configured: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, [leadFilters, leadStatus, leadsPage, profile, selectedLeadListId]);
+  }, [leadFilters, leadStatus, leadsPage, profile, selectedCampaignId, selectedLeadListId]);
 
   useEffect(() => {
     if (!user || !profile?.team_id || !["dialer", "import"].includes(page)) return;
@@ -264,6 +271,23 @@ export function Workspace({ configured }: { configured: boolean }) {
     });
     return () => { alive = false; };
   }, [user, profile?.team_id, selectedCampaignId]);
+
+  useEffect(() => {
+    if (modal !== "lead" || !leadFormCampaignId) {
+      setLeadFormLists([]);
+      setLeadFormLeadListId("");
+      return;
+    }
+    let alive = true;
+    void api<{ data: LeadList[] }>(`/api/campaigns/${leadFormCampaignId}/lists`).then(({ data }) => {
+      if (!alive) return;
+      setLeadFormLists(data);
+      setLeadFormLeadListId((current) => data.some((list) => list.id === current) ? current : "");
+    }).catch((loadError) => {
+      if (alive) setError(loadError instanceof Error ? loadError.message : "Leadlister kunne ikke indlæses.");
+    });
+    return () => { alive = false; };
+  }, [user, profile?.team_id, modal, leadFormCampaignId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -495,15 +519,55 @@ export function Workspace({ configured }: { configured: boolean }) {
     }
   }
 
+  async function openLeadModal() {
+    setModal("lead");
+    try {
+      const { data } = await api<{ data: Campaign[] }>("/api/campaigns");
+      setLeadFormCampaigns(data);
+      const preferred = data.find((campaign) => campaign.id === selectedCampaignId) ?? data[0];
+      setLeadFormCampaignId(preferred?.id ?? "");
+      setLeadFormLeadListId("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Kampagner kunne ikke indlæses.");
+    }
+  }
+
+  async function createLeadFormList() {
+    if (!leadFormCampaignId || leadFormNewListName.trim().length < 2) {
+      setError("Vælg en kampagne, og angiv et navn på mindst 2 tegn til leadlisten.");
+      return;
+    }
+    setLeadFormListBusy(true);
+    setError("");
+    try {
+      const { data } = await api<{ data: LeadList }>(`/api/campaigns/${leadFormCampaignId}/lists`, {
+        method: "POST",
+        body: JSON.stringify({ name: leadFormNewListName }),
+      });
+      setLeadFormLists((current) => [data, ...current]);
+      setLeadFormLeadListId(data.id);
+      setLeadFormNewListName("");
+      setNotice("Leadlisten er oprettet under den valgte kampagne.");
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "Leadlisten kunne ikke oprettes.");
+    } finally {
+      setLeadFormListBusy(false);
+    }
+  }
+
   async function createLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
       await api("/api/leads", { method: "POST", body: JSON.stringify({
         ...leadForm,
         employee_count: leadForm.employee_count ? Number(leadForm.employee_count) : null,
+        campaign_id: leadFormCampaignId,
+        ...(leadFormLeadListId ? { lead_list_id: leadFormLeadListId } : {}),
       }) });
       setModal(null);
       setLeadForm({ company_name: "", phone: "", contact_person: "", cvr: "", email: "", website: "", address: "", city: "", industry: "", employee_count: "", notes: "" });
+      setLeadFormCampaignId("");
+      setLeadFormLeadListId("");
       setNotice("Virksomheden er oprettet.");
       void loadPageData(page, search);
     } catch (createError) {
@@ -578,15 +642,19 @@ export function Workspace({ configured }: { configured: boolean }) {
   }
 
   async function createDialerLead(input: { company_name: string; phone: string; contact_person: string; notes: string }): Promise<boolean> {
-    if (!selectedLeadListId) {
-      setError("Vælg en tildelt kampagne og leadliste, før du opretter et lead.");
+    if (!selectedCampaignId) {
+      setError("Vælg en tildelt kampagne, før du opretter et lead.");
       return false;
     }
     if (!window.confirm(`Opret ${input.company_name.trim()} på den valgte leadliste?`)) return false;
     try {
       const { data } = await api<{ data: Lead }>("/api/leads", {
         method: "POST",
-        body: JSON.stringify({ ...input, lead_list_id: selectedLeadListId }),
+        body: JSON.stringify({
+          ...input,
+          campaign_id: selectedCampaignId,
+          ...(selectedLeadListId ? { lead_list_id: selectedLeadListId } : {}),
+        }),
       });
       setActiveLead(data);
       setQueue((current) => [data, ...current.filter((lead) => lead.id !== data.id)]);
@@ -954,8 +1022,8 @@ export function Workspace({ configured }: { configured: boolean }) {
         </header>
         <div className="page-content">
           {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span><button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><X size={16} /></button></div>}
-          {page === "dashboard" && <DashboardView data={dashboard} loading={loading} name={greeting} role={profile.role} setPage={setPage} onNewLead={() => setModal("lead")} />}
-          {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => setModal("lead")} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
+          {page === "dashboard" && <DashboardView data={dashboard} loading={loading} name={greeting} role={profile.role} setPage={setPage} onNewLead={() => void openLeadModal()} />}
+          {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
             lead={activeLead} queueCount={queue.length} call={activeCall} elapsed={elapsed} callStarted={callStarted}
             campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
@@ -1013,6 +1081,18 @@ export function Workspace({ configured }: { configured: boolean }) {
       {modal && <Modal title={modal === "lead" ? "Tilføj virksomhed" : modal === "callback" ? "Planlæg callback" : "Book et møde"} onClose={() => setModal(null)}>
         {modal === "lead" && <form className="modal-form" onSubmit={createLead}>
           <div className="form-grid">
+            <label>Kampagne *<select required value={leadFormCampaignId} onChange={(event) => { setLeadFormCampaignId(event.target.value); setLeadFormLeadListId(""); }}>
+              <option value="">Vælg kampagne …</option>{leadFormCampaigns.map((campaign) => <option value={campaign.id} key={campaign.id}>{campaign.name}</option>)}
+            </select></label>
+            <label>Leadliste (valgfri)<select value={leadFormLeadListId} onChange={(event) => setLeadFormLeadListId(event.target.value)} disabled={!leadFormCampaignId}>
+              <option value="">Ingen specifik liste</option>{leadFormLists.map((list) => <option value={list.id} key={list.id}>{list.name}</option>)}
+            </select></label>
+            {profile.role === "admin" && leadFormCampaignId && <div className="field-wide lead-form-list-create">
+              <label>Opret ny leadliste under kampagnen<input maxLength={120} value={leadFormNewListName} onChange={(event) => setLeadFormNewListName(event.target.value)} placeholder="Leadlistens navn" /></label>
+              <button type="button" className="button button-secondary button-small" disabled={leadFormListBusy || leadFormNewListName.trim().length < 2} onClick={() => void createLeadFormList()}>
+                {leadFormListBusy ? "Opretter …" : "Opret leadliste"}
+              </button>
+            </div>}
             <label className="field-wide">Virksomhedens navn *<input required value={leadForm.company_name} onChange={(event) => setLeadForm({ ...leadForm, company_name: event.target.value })} placeholder="Nordic Studio ApS" /></label>
             <label>Telefonnummer *<input required value={leadForm.phone} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} placeholder="+45 12 34 56 78" /></label>
             <label>CVR-nummer<input value={leadForm.cvr} onChange={(event) => setLeadForm({ ...leadForm, cvr: event.target.value })} placeholder="12345678" /></label>
@@ -1212,7 +1292,7 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
         <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
       </select></label>
       <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
-        <option value="">Vælg leadliste …</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+        <option value="">Alle leads i kampagnen</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
       </select></label>
       <span>Her vises kun kampagner og leadlister, som administratoren har tildelt dig.</span>
     </div>
@@ -1264,11 +1344,11 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
           <textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Noter til det manuelle opkald …" />
         </div> : <div className="empty-queue">
           <span className="empty-queue-icon"><Check size={28} /></span>
-          <h2>{!campaigns.length ? "Ingen kampagner tildelt" : !selectedCampaignId ? "Vælg din kampagne" : !selectedLeadListId ? "Vælg din leadliste" : "Du er up to date"}</h2>
-          <p>{!campaigns.length ? "Bed din administrator om at tildele dig en kampagne." : !selectedLeadListId ? "Vælg den kampagne og leadliste, du skal ringe fra. Du kan også ringe manuelt til et nummer ovenfor." : "Der er ingen leads klar til opkald lige nu. Alle fremtidige callbacks holdes uden for køen."}</p>
-          {selectedLeadListId && <button className="button button-secondary" onClick={onRefresh}><ArrowDown size={15} /> Opdatér køen</button>}
-          {selectedLeadListId && <form className="dialer-create-lead" onSubmit={(event) => void submitNewLead(event)}>
-            <span className="panel-eyebrow">TILFØJ ET LEAD TIL DEN VALGTE LISTE</span>
+          <h2>{!campaigns.length ? "Ingen kampagner tildelt" : !selectedCampaignId ? "Vælg din kampagne" : "Du er up to date"}</h2>
+          <p>{!campaigns.length ? "Bed din administrator om at tildele dig en kampagne." : !selectedCampaignId ? "Vælg en kampagne ovenfor. Du kan også ringe manuelt til et nummer uden lead." : "Der er ingen leads klar til opkald i dit udvalg lige nu. Alle fremtidige callbacks holdes uden for køen."}</p>
+          {selectedCampaignId && <button className="button button-secondary" onClick={onRefresh}><ArrowDown size={15} /> Opdatér køen</button>}
+          {selectedCampaignId && <form className="dialer-create-lead" onSubmit={(event) => void submitNewLead(event)}>
+            <span className="panel-eyebrow">{selectedLeadListId ? "TILFØJ ET LEAD TIL DEN VALGTE LISTE" : "TILFØJ ET LEAD TIL KAMPAGNEN"}</span>
             <label>Virksomhed *<input required maxLength={200} value={newLead.company_name} onChange={(event) => setNewLead({ ...newLead, company_name: event.target.value })} placeholder="Virksomhedens navn" /></label>
             <label>Telefonnummer *<input required inputMode="tel" value={newLead.phone} onChange={(event) => setNewLead({ ...newLead, phone: event.target.value })} placeholder="+45 12 34 56 78" /></label>
             <label>Kontaktperson<input maxLength={150} value={newLead.contact_person} onChange={(event) => setNewLead({ ...newLead, contact_person: event.target.value })} placeholder="Navn (valgfrit)" /></label>

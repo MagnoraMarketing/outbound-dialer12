@@ -73,13 +73,22 @@ export async function POST(request: Request) {
   }
   const assignedUserId = context.profile.role === "salesperson" ? context.user.id
     : typeof body.assigned_user_id === "string" ? body.assigned_user_id : context.user.id;
+  let campaignId = typeof body.campaign_id === "string" ? body.campaign_id : null;
   let leadListId: string | null = null;
   if (body.lead_list_id !== undefined) {
     if (typeof body.lead_list_id !== "string") return apiError("Vælg en gyldig leadliste.");
     const { data: leadList, error: listError } = await context.supabase.from("lead_lists")
-      .select("id").eq("id", body.lead_list_id).eq("team_id", context.profile.team_id).maybeSingle();
+      .select("id, campaign_id").eq("id", body.lead_list_id).eq("team_id", context.profile.team_id).maybeSingle();
     if (listError || !leadList) return apiError("Leadlisten blev ikke fundet eller er ikke tildelt dig.", listError ? 500 : 404);
+    if (campaignId && campaignId !== leadList.campaign_id) return apiError("Leadlisten tilhører ikke den valgte kampagne.");
+    campaignId = leadList.campaign_id;
     leadListId = leadList.id;
+  }
+  if (!campaignId) return apiError("Vælg en kampagne til virksomheden.");
+  const { data: campaign, error: campaignError } = await context.supabase.from("campaigns")
+    .select("id").eq("id", campaignId).eq("team_id", context.profile.team_id).maybeSingle();
+  if (campaignError || !campaign) {
+    return apiError("Kampagnen blev ikke fundet eller er ikke tildelt dig.", campaignError ? 500 : 404);
   }
   const { data, error } = await context.supabase.from("leads").insert({
     team_id: context.profile.team_id,
@@ -96,6 +105,7 @@ export async function POST(request: Request) {
     notes: typeof body.notes === "string" ? body.notes.slice(0, 5000) : "",
     status: isLeadStatus(body.status) ? body.status : "new",
     assigned_user_id: assignedUserId,
+    campaign_id: campaign.id,
     lead_list_id: leadListId,
     created_by: context.user.id,
   }).select().single();

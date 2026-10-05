@@ -6,11 +6,22 @@ export async function GET(request: Request) {
   const result = await requireContext();
   if ("response" in result) return result.response;
   const { context } = result;
-  const listId = new URL(request.url).searchParams.get("lead_list_id");
-  if (!listId) return NextResponse.json({ data: [] });
+  const params = new URL(request.url).searchParams;
+  const campaignId = params.get("campaign_id");
+  const listId = params.get("lead_list_id");
+  if (!campaignId) return NextResponse.json({ data: [] });
+  const { data: campaign, error: campaignError } = await context.supabase.from("campaigns")
+    .select("id").eq("id", campaignId).eq("team_id", context.profile.team_id).maybeSingle();
+  if (campaignError || !campaign) return apiError("Kampagnen blev ikke fundet eller er ikke tildelt dig.", campaignError ? 500 : 404);
+  if (listId) {
+    const { data: leadList, error: listError } = await context.supabase.from("lead_lists")
+      .select("id").eq("id", listId).eq("campaign_id", campaignId).eq("team_id", context.profile.team_id).maybeSingle();
+    if (listError || !leadList) return apiError("Leadlisten blev ikke fundet i den valgte kampagne.", listError ? 500 : 404);
+  }
   const now = new Date().toISOString();
   let query = context.supabase.from("leads").select("*")
     .is("deleted_at", null)
+    .eq("campaign_id", campaignId)
     .not("status", "in", '("do_not_call","wrong_number","converted")')
     .or(`next_follow_up_at.is.null,next_follow_up_at.lte.${now}`);
   if (listId) query = query.eq("lead_list_id", listId);

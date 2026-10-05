@@ -132,6 +132,7 @@ export async function POST(request: Request) {
     }).map((row) => ({
       ...row,
       team_id: context.profile.team_id,
+      campaign_id: leadList.campaign_id,
       lead_list_id: leadList.id,
       assigned_user_id: assignedUser.id,
       created_by: context.user.id,
