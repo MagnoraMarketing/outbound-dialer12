@@ -219,6 +219,58 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .quick-link small { color: #a1aaba; font-size: 8px; }
 .quick-link > svg { color: #a8b0bd; }
 .quick-link:hover strong { color: #4058d3; }
+.personal-budget { padding: 17px; margin-top: 15px; }
+.budget-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 13px; }
+.budget-heading > svg { color: #6d7de1; }
+.budget-heading h2, .team-budgets .panel-heading h2 { margin: 5px 0 3px; color: #34415d; font: 700 14px var(--font-display); }
+.budget-heading p, .team-budgets .panel-heading p, .message-composer .panel-heading p { margin: 0; color: #929caf; font-size: 9px; line-height: 1.55; }
+.personal-budget-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.budget-progress-card { display: grid; gap: 8px; padding: 11px; border: 1px solid #edf0f6; border-radius: 8px; background: #fbfcff; }
+.budget-progress-card > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.budget-progress-card strong { color: #56627b; font-size: 9px; }
+.budget-progress-card span, .budget-progress-card small { color: #929caf; font-size: 8px; }
+.budget-progress-track, .budget-mini-progress { height: 6px; overflow: hidden; border-radius: 8px; background: #edf0f7; }
+.budget-progress-track i, .budget-mini-progress i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #6a7be3, #8b98ee); transition: width .2s ease; }
+.budget-progress-month i, .budget-mini-month i { background: linear-gradient(90deg, #43b398, #80d1b8); }
+.budget-editor { display: grid; grid-template-columns: minmax(170px, 1.3fr) repeat(2, minmax(100px, .7fr)) auto; align-items: end; gap: 9px; padding-top: 12px; margin-top: 12px; border-top: 1px solid #eff1f5; }
+.budget-editor label, .message-composer label { display: grid; gap: 5px; color: #78849a; font-size: 8px; font-weight: 600; }
+.budget-editor input, .budget-editor select, .message-composer input, .message-composer select, .message-composer textarea { min-width: 0; width: 100%; min-height: 33px; padding: 0 8px; border: 1px solid #e5e9f0; border-radius: 6px; color: #536078; background: white; font-size: 9px; }
+.budget-editor .button { white-space: nowrap; }
+.team-budgets { padding: 16px; margin-top: 15px; }
+.team-budgets .panel-heading { margin-bottom: 11px; }
+.admin-budget-editor { grid-template-columns: minmax(145px, 1.1fr) minmax(145px, 1fr) minmax(90px, .65fr) minmax(90px, .65fr) auto; padding-top: 0; margin-top: 0; border-top: 0; }
+.budget-report-list { display: grid; gap: 8px; margin-top: 15px; }
+.budget-person-report { padding: 10px; border: 1px solid #edf0f5; border-radius: 8px; background: #fff; }
+.budget-person-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.budget-person-heading strong { color: #4f5c75; font-size: 9px; }
+.budget-person-heading span, .budget-no-target { color: #9ba5b5; font-size: 8px; }
+.budget-no-target { margin: 0; }
+.budget-report-row { display: grid; grid-template-columns: minmax(145px, 1.1fr) minmax(80px, 1fr) minmax(80px, 1fr); align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid #f1f3f7; }
+.budget-report-label { display: flex; flex-direction: column; gap: 3px; color: #66728b; font-size: 8px; }
+.budget-report-label small { color: #9ba5b5; font-size: 7px; }
+.budget-mini-progress { height: 5px; }
+.budget-mini-week i { background: #7584e7; }
+.messages-view { max-width: 1000px; }
+.message-composer { padding: 16px; margin-bottom: 16px; }
+.message-composer .panel-heading { margin-bottom: 13px; }
+.message-composer .panel-heading h2, .messages-inbox .panel-heading h2 { margin: 4px 0; color: #34415d; font: 700 14px var(--font-display); }
+.message-composer form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.message-composer label:nth-last-of-type(1), .message-composer label:nth-last-of-type(2), .message-composer .form-error, .message-composer .button { grid-column: 1 / -1; }
+.message-composer textarea { min-height: 86px; padding: 9px; resize: vertical; }
+.message-composer .button { justify-self: start; }
+.messages-inbox { display: grid; gap: 8px; }
+.messages-inbox > .panel-heading { margin: 0 2px 2px; }
+.inbox-message { display: flex; align-items: flex-start; gap: 10px; padding: 13px; }
+.inbox-message-unread { border-color: #cdd4fa; background: #fbfbff; box-shadow: inset 3px 0 #697be2; }
+.inbox-message-icon { width: 30px; height: 30px; display: grid; flex: 0 0 auto; place-items: center; border-radius: 8px; color: #6475db; background: #eef0ff; }
+.inbox-message-content { min-width: 0; flex: 1; }
+.inbox-message-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #98a2b3; font-size: 8px; }
+.inbox-message h3 { margin: 6px 0 4px; color: #46536d; font-size: 10px; }
+.inbox-message p { margin: 0; color: #707d94; font-size: 9px; line-height: 1.6; white-space: pre-wrap; }
+.inbox-message-content > small { display: block; margin-top: 7px; color: #8b97ad; font-size: 8px; }
+.inbox-message > .text-button { flex: 0 0 auto; align-self: center; }
+.notification-button { position: relative; }
+.notification-button > i { width: 7px; height: 7px; position: absolute; top: 5px; right: 5px; border: 1px solid white; border-radius: 50%; background: #e77d78; }
 .empty-inline { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 130px; padding: 20px 10px; text-align: center; }
 .empty-inline > .empty-icon { width: 29px; height: 29px; display: grid; place-items: center; margin-bottom: 8px; border-radius: 9px; color: #7a89e5; background: #f0f2ff; }
 .empty-inline > strong { color: #56617a; font-size: 11px; }
@@ -623,6 +675,12 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
   .campaign-import > div:first-child, .campaign-selectors > span { grid-column: auto; }
   .campaign-import .import-assignee, .campaign-import .assignment-note { grid-column: auto; }
   .dialer-manual-call .button { width: 100%; }
+  .personal-budget-grid, .budget-editor, .admin-budget-editor, .message-composer form { grid-template-columns: 1fr; }
+  .budget-editor .button, .message-composer label:nth-last-of-type(1), .message-composer label:nth-last-of-type(2), .message-composer .form-error, .message-composer .button { grid-column: auto; }
+  .budget-report-row { grid-template-columns: 1fr; gap: 6px; }
+  .inbox-message-meta { align-items: flex-start; flex-direction: column; }
+  .inbox-message { flex-wrap: wrap; }
+  .inbox-message > .text-button { margin-left: 40px; }
   .admin-member-heading { grid-template-columns: 32px minmax(0, 1fr); }
   .admin-member-heading > label:nth-of-type(2), .admin-member-heading > .member-joined { grid-column: 2; }
   .welcome-row, .page-heading, .dialer-title { align-items: flex-start; }

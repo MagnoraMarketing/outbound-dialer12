@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
+import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
 
 const allowedFields = new Set([
@@ -29,7 +29,6 @@ export async function POST(request: Request) {
     ? body.row_offset : 0;
   const mapping = body.mapping as Record<string, unknown>;
   if (typeof body.lead_list_id !== "string") return apiError("Vælg en kampagne og leadliste før import.");
-  if (typeof body.assigned_user_id !== "string") return apiError("Vælg den bruger, som skal have leadlisten.");
   const rows: Record<string, unknown>[] = [];
   const errors: { row: number; reason: string }[] = [];
   const phones = new Set<string>();
@@ -39,35 +38,6 @@ export async function POST(request: Request) {
   const { data: leadList, error: listError } = await context.supabase.from("lead_lists")
     .select("id, campaign_id").eq("id", body.lead_list_id).eq("team_id", context.profile.team_id).maybeSingle();
   if (listError || !leadList) return apiError("Leadlisten blev ikke fundet i dit team.", listError ? 500 : 404);
-  let assignedUser: { id: string };
-  try {
-    const admin = createSupabaseAdminClient();
-    const { data, error } = await admin.from("profiles").select("id")
-      .eq("id", body.assigned_user_id).eq("team_id", context.profile.team_id).maybeSingle();
-    if (error || !data) return apiError("Den valgte bruger blev ikke fundet i dit team.", error ? 500 : 404);
-    assignedUser = data;
-    const { error: campaignAssignmentError } = await admin.from("campaign_assignments").upsert({
-      team_id: context.profile.team_id,
-      campaign_id: leadList.campaign_id,
-      user_id: assignedUser.id,
-    }, { onConflict: "team_id,campaign_id,user_id" });
-    if (campaignAssignmentError) {
-      console.error("Campaign assignment creation failed", campaignAssignmentError.message);
-      return apiError("Kampagnen kunne ikke tildeles brugeren.", 500);
-    }
-    const { error: listAssignmentError } = await admin.from("lead_list_assignments").upsert({
-      team_id: context.profile.team_id,
-      lead_list_id: leadList.id,
-      user_id: assignedUser.id,
-    }, { onConflict: "team_id,lead_list_id,user_id" });
-    if (listAssignmentError) {
-      console.error("Lead list assignment creation failed", listAssignmentError.message);
-      return apiError("Leadlisten kunne ikke tildeles brugeren.", 500);
-    }
-  } catch (error) {
-    console.error("Lead import admin setup failed", error);
-    return apiError("Import kræver, at SUPABASE_SERVICE_ROLE_KEY er konfigureret.", 503);
-  }
 
   for (const [index, raw] of body.rows.entries()) {
     const rowNumber = rowOffset + index + 2;
@@ -134,7 +104,7 @@ export async function POST(request: Request) {
       team_id: context.profile.team_id,
       campaign_id: leadList.campaign_id,
       lead_list_id: leadList.id,
-      assigned_user_id: assignedUser.id,
+      assigned_user_id: null,
       created_by: context.user.id,
       status: "new",
     }));

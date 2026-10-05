@@ -7,7 +7,7 @@ import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
   CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
-  MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
+  MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
   Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +25,21 @@ type DashboardData = {
   performance: { user_id: string; name: string; calls: number; meetings: number; talk_time: number }[];
   activity: { key: string; label: string; calls: number; connected: number }[];
 };
+type BudgetEntry = {
+  id: string; user_id: string; user_name: string; role: Profile["role"]; campaign_id: string | null;
+  campaign_name: string | null; weekly_target: number; monthly_target: number;
+  weekly_meetings: number; monthly_meetings: number; updated_at: string;
+};
+type BudgetReport = {
+  data: BudgetEntry[];
+  members: { id: string; full_name: string; role: Profile["role"] }[];
+  campaigns: { id: string; name: string }[];
+};
+type TeamMessage = {
+  id: string; broadcast_id: string; recipient_user_id: string; sent_by: string;
+  campaign_id: string | null; lead_list_id: string | null;
+  title: string; body: string; created_at: string; read_at: string | null; recipient_count?: number;
+};
 type Call = { id: string; lead_id: string | null; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; leads?: { company_name: string; contact_person: string | null } | null };
 type Callback = { id: string; lead_id: string; callback_at: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type Meeting = { id: string; meeting_at: string; meeting_type: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
@@ -36,7 +51,7 @@ type LeadFilters = { city: string; industry: string; employees_min: string; empl
 type Campaign = { id: string; name: string; created_at: string };
 type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
 type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
-type Page = "dashboard" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "settings";
+type Page = "dashboard" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -58,6 +73,9 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
   { label: "DATA", items: [
     { id: "history", title: "Opkaldshistorik", icon: Activity },
     { id: "import", title: "Importer leads", icon: FileSpreadsheet },
+  ] },
+  { label: "SAMARBEJDE", items: [
+    { id: "messages", title: "Beskeder", icon: MessageSquareText },
   ] },
   { label: "ADMINISTRATION", items: [
     { id: "team", title: "Team", icon: Users },
@@ -126,6 +144,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [budgetReport, setBudgetReport] = useState<BudgetReport | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsTotal, setLeadsTotal] = useState(0);
   const [leadsPage, setLeadsPage] = useState(0);
@@ -136,11 +155,11 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamCampaigns, setTeamCampaigns] = useState<Campaign[]>([]);
   const [teamLeadLists, setTeamLeadLists] = useState<LeadList[]>([]);
+  const [teamMessages, setTeamMessages] = useState<TeamMessage[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [leadLists, setLeadLists] = useState<LeadList[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [selectedLeadListId, setSelectedLeadListId] = useState("");
-  const [importAssignedUserId, setImportAssignedUserId] = useState("");
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newLeadListName, setNewLeadListName] = useState("");
   const [campaignBusy, setCampaignBusy] = useState(false);
@@ -184,8 +203,14 @@ export function Workspace({ configured }: { configured: boolean }) {
     setLoading(true);
     try {
       if (activePage === "dashboard") {
-        const result = await api<{ data: DashboardData }>("/api/dashboard");
+        const [result, budgets, messages] = await Promise.all([
+          api<{ data: DashboardData }>("/api/dashboard"),
+          api<BudgetReport>("/api/budgets"),
+          api<{ data: TeamMessage[] }>("/api/messages"),
+        ]);
         setDashboard(result.data);
+        setBudgetReport(budgets);
+        setTeamMessages(messages.data);
       } else if (activePage === "leads") {
         const params = new URLSearchParams();
         if (q) params.set("q", q);
@@ -223,6 +248,10 @@ export function Workspace({ configured }: { configured: boolean }) {
         setTeam(result.data);
         setTeamCampaigns(result.campaigns);
         setTeamLeadLists(result.lead_lists);
+        setBudgetReport(await api<BudgetReport>("/api/budgets"));
+      } else if (activePage === "messages") {
+        const { data } = await api<{ data: TeamMessage[] }>("/api/messages");
+        setTeamMessages(data);
       }
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Data kunne ikke indlæses.");
@@ -232,11 +261,11 @@ export function Workspace({ configured }: { configured: boolean }) {
   }, [leadFilters, leadStatus, leadsPage, profile, selectedCampaignId, selectedLeadListId]);
 
   useEffect(() => {
-    if (!user || !profile?.team_id || !["dialer", "import"].includes(page)) return;
+    if (!user || !profile?.team_id || !["dialer", "import", "messages"].includes(page)) return;
     let alive = true;
     void Promise.all([
       api<{ data: Campaign[] }>("/api/campaigns"),
-      page === "import" && profile.role === "admin" ? api<TeamAdminData>("/api/team") : Promise.resolve(null),
+      page === "messages" && profile.role === "admin" ? api<TeamAdminData>("/api/team") : Promise.resolve(null),
     ]).then(([campaignResult, teamResult]) => {
       if (!alive) return;
       setCampaigns(campaignResult.data);
@@ -245,9 +274,6 @@ export function Workspace({ configured }: { configured: boolean }) {
         setTeam(teamResult.data);
         setTeamCampaigns(teamResult.campaigns);
         setTeamLeadLists(teamResult.lead_lists);
-        setImportAssignedUserId((current) => teamResult.data.some((member) => member.id === current)
-          ? current : teamResult.data.some((member) => member.id === user.id)
-            ? user.id : teamResult.data[0]?.id ?? "");
       }
     }).catch((loadError) => {
       if (alive) setError(loadError instanceof Error ? loadError.message : "Kampagner kunne ikke indlæses.");
@@ -575,6 +601,44 @@ export function Workspace({ configured }: { configured: boolean }) {
     }
   }
 
+  async function saveBudget(userId: string, campaignId: string | null, weekly: number, monthly: number) {
+    try {
+      await api("/api/budgets", {
+        method: "PUT",
+        body: JSON.stringify({ user_id: userId, campaign_id: campaignId, weekly_target: weekly, monthly_target: monthly }),
+      });
+      setNotice("Budgetmålet er gemt.");
+      const refreshPage = page === "team" ? "team" : "dashboard";
+      void loadPageData(refreshPage);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Budgetmålet kunne ikke gemmes.");
+    }
+  }
+
+  async function sendTeamMessage(input: { title: string; body: string; scope: string; campaign_id?: string; lead_list_id?: string }) {
+    try {
+      const result = await api<{ sent: number }>("/api/messages", {
+        method: "POST", body: JSON.stringify(input),
+      });
+      setNotice(`Beskeden blev sendt til ${result.sent} teammedlemmer.`);
+      void loadPageData("messages");
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Beskeden kunne ikke sendes.");
+      throw sendError;
+    }
+  }
+
+  async function markMessageRead(messageId: string) {
+    try {
+      await api(`/api/messages/${messageId}`, { method: "PATCH" });
+      setTeamMessages((current) => current.map((message) =>
+        message.id === messageId ? { ...message, read_at: new Date().toISOString() } : message,
+      ));
+    } catch (readError) {
+      setError(readError instanceof Error ? readError.message : "Beskeden kunne ikke markeres som læst.");
+    }
+  }
+
   async function updateLead(id: string, update: Record<string, unknown>) {
     try {
       await api(`/api/leads/${id}`, { method: "PATCH", body: JSON.stringify(update) });
@@ -763,10 +827,6 @@ export function Workspace({ configured }: { configured: boolean }) {
       setError("Vælg eller opret en kampagne og leadliste før import.");
       return;
     }
-    if (!importAssignedUserId) {
-      setError("Vælg den bruger, som skal have de importerede leads.");
-      return;
-    }
     setCsvBusy(true);
     setCsvProgress(0);
     setCsvErrors([]);
@@ -783,7 +843,6 @@ export function Workspace({ configured }: { configured: boolean }) {
             mapping: csvMapping,
             row_offset: offset,
             lead_list_id: selectedLeadListId,
-            assigned_user_id: importAssignedUserId,
           }),
         });
         const result = await response.json().catch(() => null) as {
@@ -970,8 +1029,12 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", settings: "Indstillinger",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team",
+    messages: "Beskeder", settings: "Indstillinger",
   };
+  const unreadMessages = teamMessages.filter((message) =>
+    message.recipient_user_id === user.id && !message.read_at,
+  ).length;
 
   return (
     <div className="app-shell">
@@ -1015,14 +1078,19 @@ export function Workspace({ configured }: { configured: boolean }) {
           <div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle[page]}</strong></div>
           <div className="topbar-actions">
             <div className="global-search"><Search size={16} /><input value={search} onChange={(event) => { setSearch(event.target.value); setLeadsPage(0); }} placeholder="Søg virksomheder, kontakt …" /><kbd>⌘ K</kbd></div>
-            <button className="icon-button notification-button" aria-label="Notifikationer"><Bell size={17} /><i /></button>
+            <button className="icon-button notification-button" aria-label={`Beskeder${unreadMessages ? `, ${unreadMessages} ulæste` : ""}`} onClick={() => setPage("messages")}>
+              <Bell size={17} />{unreadMessages > 0 && <i />}
+            </button>
             <div className="topbar-divider" />
             <div className="topbar-avatar">{initials(profile.full_name || user.email || "S")}</div>
           </div>
         </header>
         <div className="page-content">
           {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span><button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><X size={16} /></button></div>}
-          {page === "dashboard" && <DashboardView data={dashboard} loading={loading} name={greeting} role={profile.role} setPage={setPage} onNewLead={() => void openLeadModal()} />}
+          {page === "dashboard" && <DashboardView
+            data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
+            budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
+          />}
           {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
             lead={activeLead} queueCount={queue.length} call={activeCall} elapsed={elapsed} callStarted={callStarted}
@@ -1052,7 +1120,6 @@ export function Workspace({ configured }: { configured: boolean }) {
           {page === "import" && profile.role === "admin" && <ImportView
             headers={csvHeaders} rows={csvRows} mapping={csvMapping} errors={csvErrors} progress={csvProgress} busy={csvBusy}
             campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
-            members={team} assignedUserId={importAssignedUserId} onAssignedUser={setImportAssignedUserId}
             newCampaignName={newCampaignName} newLeadListName={newLeadListName} campaignBusy={campaignBusy}
             onCampaign={setSelectedCampaignId} onLeadList={setSelectedLeadListId}
             onNewCampaignName={setNewCampaignName} onNewLeadListName={setNewLeadListName}
@@ -1062,6 +1129,7 @@ export function Workspace({ configured }: { configured: boolean }) {
           />}
           {page === "team" && <TeamView
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
+            budgets={budgetReport} onSaveBudget={saveBudget}
             onInvite={() => setModal("invite")}
             onSave={async (memberId, fullName, role, campaignIds, leadListIds) => {
               try {
@@ -1074,6 +1142,11 @@ export function Workspace({ configured }: { configured: boolean }) {
                 setError(saveError instanceof Error ? saveError.message : "Brugerens ændringer kunne ikke gemmes.");
               }
             }}
+          />}
+          {page === "messages" && <MessagesView
+            messages={teamMessages} loading={loading} userId={user.id} role={profile.role}
+            campaigns={campaigns} leadLists={teamLeadLists}
+            onSend={sendTeamMessage} onMarkRead={markMessageRead}
           />}
           {page === "settings" && <SettingsView user={user} profile={profile} />}
         </div>
@@ -1137,8 +1210,10 @@ function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? "brand-compact" : ""}`}><span className="brand-mark"><span /><span /><span /></span><span className="brand-name">nordcall<span>.</span></span></div>;
 }
 
-function DashboardView({ data, loading, name, role, setPage, onNewLead }: {
-  data: DashboardData | null; loading: boolean; name: string; role: Profile["role"]; setPage: (page: Page) => void; onNewLead: () => void;
+function DashboardView({ data, loading, name, role, userId, budgets, setPage, onNewLead, onSaveBudget }: {
+  data: DashboardData | null; loading: boolean; name: string; role: Profile["role"]; userId: string;
+  budgets: BudgetReport | null; setPage: (page: Page) => void; onNewLead: () => void;
+  onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
   const metrics = [
     { label: "Opkald i dag", value: data?.calls ?? 0, icon: PhoneCall, tone: "blue", meta: `${data?.connected ?? 0} forbundne` },
@@ -1158,6 +1233,7 @@ function DashboardView({ data, loading, name, role, setPage, onNewLead }: {
         <div className="metric-meta"><span className={index === 0 ? "meta-positive" : ""}>{index === 0 ? <ArrowUpRight size={13} /> : <span className="meta-dot" />}{meta}</span></div>
       </div>)}
     </section>
+    {budgets && <PersonalBudgetCard report={budgets} userId={userId} onSave={onSaveBudget} />}
     <section className="dashboard-columns">
       <div className="panel activity-panel">
         <div className="panel-heading"><div><span className="panel-eyebrow">DIT TEMPO</span><h2>Opkaldsaktivitet</h2></div><button className="select-button">Denne uge <ChevronDown size={14} /></button></div>
@@ -1198,6 +1274,43 @@ function DashboardView({ data, loading, name, role, setPage, onNewLead }: {
       </div>
     </section>
   </div>;
+}
+
+function PersonalBudgetCard({ report, userId, onSave }: {
+  report: BudgetReport; userId: string; onSave: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
+}) {
+  const [campaignId, setCampaignId] = useState("");
+  const target = report.data.find((item) => item.user_id === userId && item.campaign_id === (campaignId || null));
+  const [weekly, setWeekly] = useState("0");
+  const [monthly, setMonthly] = useState("0");
+  useEffect(() => {
+    setWeekly(String(target?.weekly_target ?? 0));
+    setMonthly(String(target?.monthly_target ?? 0));
+  }, [target?.id, target?.weekly_target, target?.monthly_target]);
+  const weeklyProgress = target?.weekly_target ? Math.min(100, Math.round(target.weekly_meetings / target.weekly_target * 100)) : 0;
+  const monthlyProgress = target?.monthly_target ? Math.min(100, Math.round(target.monthly_meetings / target.monthly_target * 100)) : 0;
+  return <section className="panel personal-budget">
+    <div className="budget-heading"><div><span className="panel-eyebrow">DIT FOKUS · BOOKEDE MØDER</span><h2>Dit budget</h2><p>Følg dine egne aftaler uge for uge og måned for måned.</p></div><Target size={19} /></div>
+    <div className="personal-budget-grid">
+      <div className="budget-progress-card"><div><strong>Ugens mål</strong><span>{target?.weekly_meetings ?? 0} / {target?.weekly_target ?? 0} møder</span></div>
+        <div className="budget-progress-track"><i style={{ width: `${weeklyProgress}%` }} /></div><small>{target?.weekly_target ? `${weeklyProgress}% gennemført` : "Aftal et ugemål med din leder"}</small>
+      </div>
+      <div className="budget-progress-card"><div><strong>Månedens mål</strong><span>{target?.monthly_meetings ?? 0} / {target?.monthly_target ?? 0} møder</span></div>
+        <div className="budget-progress-track budget-progress-month"><i style={{ width: `${monthlyProgress}%` }} /></div><small>{target?.monthly_target ? `${monthlyProgress}% gennemført` : "Sæt et mål sammen med din leder"}</small>
+      </div>
+    </div>
+    <form className="budget-editor" onSubmit={(event) => {
+      event.preventDefault();
+      onSave(userId, campaignId || null, Number(weekly), Number(monthly));
+    }}>
+      <label>Budget for<select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+        <option value="">Alle kampagner samlet</option>{report.campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+      </select></label>
+      <label>Ugentligt mål<input required type="number" min="0" max="10000" step="1" value={weekly} onChange={(event) => setWeekly(event.target.value)} /></label>
+      <label>Månedligt mål<input required type="number" min="0" max="50000" step="1" value={monthly} onChange={(event) => setMonthly(event.target.value)} /></label>
+      <button className="button button-secondary button-small"><Check size={14} /> Gem budget</button>
+    </form>
+  </section>;
 }
 
 function LeadsView({ leads, total, page, onPage, loading, status, setStatus, filters, setFilters, members, profile, onAdd, onUpdate, onDelete, onExport }: {
@@ -1450,11 +1563,10 @@ function HistoryView({ calls, loading, onExport }: { calls: Call[]; loading: boo
 }
 
 function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
-  members, assignedUserId, onAssignedUser, newCampaignName, newLeadListName, campaignBusy, onCampaign, onLeadList, onNewCampaignName, onNewLeadListName,
+  newCampaignName, newLeadListName, campaignBusy, onCampaign, onLeadList, onNewCampaignName, onNewLeadListName,
   onCreateCampaign, onCreateLeadList, fileRef, onFile, onMapping, onImport, onDrop }: {
   headers: string[]; rows: CsvRow[]; mapping: Partial<Record<CsvField, string>>; errors: { row: number; reason: string }[];
   campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
-  members: TeamMember[]; assignedUserId: string; onAssignedUser: (id: string) => void;
   newCampaignName: string; newLeadListName: string; campaignBusy: boolean;
   onCampaign: (id: string) => void; onLeadList: (id: string) => void;
   onNewCampaignName: (value: string) => void; onNewLeadListName: (value: string) => void;
@@ -1484,10 +1596,7 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
             <option value="">Vælg leadliste …</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
           </select></label>
           <div className="campaign-create-row"><input value={newLeadListName} onChange={(event) => onNewLeadListName(event.target.value)} maxLength={120} placeholder="Ny leadlistes navn" disabled={!selectedCampaignId} /><button className="button button-secondary button-small" onClick={onCreateLeadList} disabled={campaignBusy || !selectedCampaignId || newLeadListName.trim().length < 2}>Opret leadliste</button></div>
-          <label className="import-assignee">Tildel leadlisten til<select value={assignedUserId} onChange={(event) => onAssignedUser(event.target.value)}>
-            <option value="">Vælg teammedlem …</option>{members.map((member) => <option value={member.id} key={member.id}>{member.full_name || "Teammedlem"} · {friendlyRole(member.role)}</option>)}
-          </select></label>
-          <p className="assignment-note">Importerede leads tildeles denne bruger og bliver kun synlige for vedkommende samt teamets ledere.</p>
+          <p className="assignment-note">Importerede leads placeres på den valgte kampagne og leadliste. Tildel adgang til brugere under Team.</p>
         </div>
         <div className="mapping-header"><div><h2>Match dine kolonner</h2><p>Vælg hvilken CSV-kolonne, der svarer til hvert felt.</p></div><span className="match-count">{Object.values(mapping).filter(Boolean).length} felter matchet</span></div>
         <div className="mapping-grid">{csvFields.map((field) => <label className="mapping-row" key={field.key}><span>{field.label}{["company_name", "phone"].includes(field.key) && <i> * </i>}</span><ArrowRight size={14} /><select value={mapping[field.key] || ""} onChange={(event) => onMapping(field.key, event.target.value)}><option value="">Spring over</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div>
@@ -1501,10 +1610,12 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
   </div>;
 }
 
-function TeamView({ members, loading, role, campaigns, leadLists, onInvite, onSave }: {
+function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInvite, onSave, onSaveBudget }: {
   members: TeamMember[]; loading: boolean; role: Profile["role"]; campaigns: Campaign[]; leadLists: LeadList[];
+  budgets: BudgetReport | null;
   onInvite: () => void;
   onSave: (userId: string, fullName: string, role: Profile["role"], campaignIds: string[], leadListIds: string[]) => void;
+  onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
   return <div className="view">
     <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Brugere og tildelinger</h1><p>Administrér teamets profiler, kampagner og leadlister ét sted.</p></div>{role === "admin" && <button className="button button-primary" onClick={onInvite}><Plus size={16} /> Invitér kollega</button>}</div>
@@ -1515,7 +1626,160 @@ function TeamView({ members, loading, role, campaigns, leadLists, onInvite, onSa
       : <div className="panel member-card" key={member.id}><div className={`avatar avatar-${index % 4}`}>{initials(member.full_name || "S")}</div><span className="member-info"><strong>{member.full_name || "Nyt teammedlem"}</strong><small>{friendlyRole(member.role)}</small></span><span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span><span className="member-online"><i /> Aktiv</span></div>)}
       {!members.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dit team begynder med dig" description="Invitér teammedlemmer for at tildele kampagner og leadlister." />}</div>}
     </div>
+    {role === "admin" && budgets && <TeamBudgetAdmin report={budgets} onSave={onSaveBudget} />}
     <div className="privacy-foot"><CheckCircle2 size={14} /> Sælgere får kun adgang til tildelte kampagner, leadlister og leads. Rolleændringer kræver administratoradgang.</div>
+  </div>;
+}
+
+function TeamBudgetAdmin({ report, onSave }: {
+  report: BudgetReport; onSave: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
+}) {
+  const initialUser = report.members.find((member) => member.role === "salesperson")?.id ?? report.members[0]?.id ?? "";
+  const [userId, setUserId] = useState(initialUser);
+  const [campaignId, setCampaignId] = useState("");
+  const target = report.data.find((item) => item.user_id === userId && item.campaign_id === (campaignId || null));
+  const [weekly, setWeekly] = useState("0");
+  const [monthly, setMonthly] = useState("0");
+  useEffect(() => {
+    if (!report.members.some((member) => member.id === userId)) setUserId(initialUser);
+  }, [report.members, userId, initialUser]);
+  useEffect(() => {
+    setWeekly(String(target?.weekly_target ?? 0));
+    setMonthly(String(target?.monthly_target ?? 0));
+  }, [target?.id, target?.weekly_target, target?.monthly_target]);
+  return <section className="panel team-budgets">
+    <div className="panel-heading"><div><span className="panel-eyebrow">MÅL OG MOTIVATION</span><h2>Uge- og månedsbudgetter</h2><p>Følg sælgernes aftalte mødemål samlet eller pr. kampagne.</p></div><Target size={18} className="heading-muted" /></div>
+    <form className="budget-editor admin-budget-editor" onSubmit={(event) => {
+      event.preventDefault();
+      if (userId) onSave(userId, campaignId || null, Number(weekly), Number(monthly));
+    }}>
+      <label>Sælger / booker<select required value={userId} onChange={(event) => setUserId(event.target.value)}>
+        <option value="">Vælg bruger …</option>{report.members.map((member) => <option key={member.id} value={member.id}>{member.full_name || "Uden navn"} · {friendlyRole(member.role)}</option>)}
+      </select></label>
+      <label>Kampagne<select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+        <option value="">Alle kampagner samlet</option>{report.campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+      </select></label>
+      <label>Ugentligt mål<input required type="number" min="0" max="10000" value={weekly} onChange={(event) => setWeekly(event.target.value)} /></label>
+      <label>Månedligt mål<input required type="number" min="0" max="50000" value={monthly} onChange={(event) => setMonthly(event.target.value)} /></label>
+      <button className="button button-primary button-small"><Check size={14} /> Gem aftalt budget</button>
+    </form>
+    <div className="budget-report-list">{report.members.map((member) => {
+      const targets = report.data.filter((item) => item.user_id === member.id);
+      return <article className="budget-person-report" key={member.id}>
+        <div className="budget-person-heading"><strong>{member.full_name || "Uden navn"}</strong><span>{friendlyRole(member.role)}</span></div>
+        {targets.length ? targets.map((item) => <div className="budget-report-row" key={item.id}>
+          <div className="budget-report-label"><span>{item.campaign_name ?? "Alle kampagner"}</span><small>{item.weekly_meetings}/{item.weekly_target} uge · {item.monthly_meetings}/{item.monthly_target} måned</small></div>
+          <BudgetProgress value={item.weekly_meetings} target={item.weekly_target} tone="week" />
+          <BudgetProgress value={item.monthly_meetings} target={item.monthly_target} tone="month" />
+        </div>) : <p className="budget-no-target">Intet budget aftalt endnu.</p>}
+      </article>;
+    })}</div>
+  </section>;
+}
+
+function BudgetProgress({ value, target, tone }: { value: number; target: number; tone: "week" | "month" }) {
+  const percent = target ? Math.min(100, Math.round(value / target * 100)) : 0;
+  return <div className={`budget-mini-progress budget-mini-${tone}`} aria-label={`${percent}% af budgetmål`}>
+    <i style={{ width: `${percent}%` }} />
+  </div>;
+}
+
+function MessagesView({ messages, loading, userId, role, campaigns, leadLists, onSend, onMarkRead }: {
+  messages: TeamMessage[]; loading: boolean; userId: string; role: Profile["role"];
+  campaigns: Campaign[]; leadLists: LeadList[];
+  onSend: (input: { title: string; body: string; scope: string; campaign_id?: string; lead_list_id?: string }) => Promise<void>;
+  onMarkRead: (id: string) => void;
+}) {
+  const [scope, setScope] = useState("team");
+  const [campaignId, setCampaignId] = useState("");
+  const [leadListId, setLeadListId] = useState("");
+  const [formCampaignLists, setFormCampaignLists] = useState<LeadList[]>([]);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  useEffect(() => {
+    if (scope !== "lead_list" || !campaignId) {
+      setFormCampaignLists([]);
+      setLeadListId("");
+      return;
+    }
+    let alive = true;
+    void api<{ data: LeadList[] }>(`/api/campaigns/${campaignId}/lists`).then(({ data }) => {
+      if (!alive) return;
+      setFormCampaignLists(data);
+      setLeadListId((current) => data.some((list) => list.id === current) ? current : "");
+    }).catch((loadError) => {
+      if (alive) setFormError(loadError instanceof Error ? loadError.message : "Leadlister kunne ikke indlæses.");
+    });
+    return () => { alive = false; };
+  }, [scope, campaignId]);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setFormError("");
+    try {
+      await onSend({
+        title,
+        body,
+        scope,
+        ...(scope === "campaign" ? { campaign_id: campaignId } : {}),
+        ...(scope === "lead_list" ? { lead_list_id: leadListId } : {}),
+      });
+      setTitle("");
+      setBody("");
+    } catch (sendError) {
+      setFormError(sendError instanceof Error ? sendError.message : "Beskeden kunne ikke sendes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const received = messages.filter((message) => message.recipient_user_id === userId);
+  const unread = received.filter((message) => !message.read_at).length;
+  return <div className="view messages-view">
+    <div className="page-heading"><div><span className="eyebrow">SAMARBEJDE PÅ FARTEN</span><h1>Beskeder</h1><p>Vigtige ændringer og hurtige beskeder fra teamet samlet ét sted.</p></div>
+      {unread > 0 && <span className="secure-tag"><Bell size={14} /> {unread} ulæste</span>}
+    </div>
+    {role === "admin" && <section className="panel message-composer">
+      <div className="panel-heading"><div><span className="panel-eyebrow">HURTIG BESKED</span><h2>Send en opdatering</h2><p>Modtagerne får beskeden i Nordcall, også næste gang de logger ind.</p></div><MessageSquareText size={18} className="heading-muted" /></div>
+      <form onSubmit={(event) => void submit(event)}>
+        <label>Send til<select value={scope} onChange={(event) => setScope(event.target.value)}>
+          <option value="team">Hele teamet</option><option value="campaign">Brugere på en kampagne</option><option value="lead_list">Brugere på en leadliste</option>
+        </select></label>
+        {scope !== "team" && <label>Kampagne<select required value={campaignId} onChange={(event) => { setCampaignId(event.target.value); setLeadListId(""); }}>
+          <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+        </select></label>}
+        {scope === "lead_list" && <label>Leadliste<select required value={leadListId} onChange={(event) => setLeadListId(event.target.value)} disabled={!campaignId}>
+          <option value="">Vælg leadliste …</option>{formCampaignLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+        </select></label>}
+        <label>Overskrift<input required minLength={2} maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="F.eks. Ny åbningstid på kampagnen" /></label>
+        <label>Besked<textarea required maxLength={2000} rows={4} value={body} onChange={(event) => setBody(event.target.value)} placeholder="Skriv ændringen eller den hurtige opdatering …" /></label>
+        {formError && <p className="form-error">{formError}</p>}
+        <button className="button button-primary" disabled={busy || (scope !== "team" && !campaignId) || (scope === "lead_list" && !leadListId)}>
+          <Bell size={15} /> {busy ? "Sender …" : "Send besked"}
+        </button>
+      </form>
+    </section>}
+    <section className="messages-inbox">
+      <div className="panel-heading"><div><span className="panel-eyebrow">{role === "admin" ? "SENEST SENDT" : "DIN INDBAKKE"}</span><h2>{role === "admin" ? "Teamopdateringer" : "Beskeder til dig"}</h2></div></div>
+      {messages.map((message) => {
+        const isReceived = message.recipient_user_id === userId;
+        const campaignName = campaigns.find((campaign) => campaign.id === message.campaign_id)?.name;
+        const listName = leadLists.find((list) => list.id === message.lead_list_id)?.name;
+        return <article className={`panel inbox-message ${isReceived && !message.read_at ? "inbox-message-unread" : ""}`} key={message.broadcast_id}>
+          <div className="inbox-message-icon"><MessageSquareText size={16} /></div>
+          <div className="inbox-message-content"><div className="inbox-message-meta">
+            <span>{isReceived ? "Fra din administrator" : `Sendt · ${message.recipient_count ?? 1} modtagere`}</span>
+            <time>{formatDate(message.created_at, { day: "numeric", month: "short", year: "numeric" })} · {formatTime(message.created_at)}</time>
+          </div>
+            <h3>{message.title}</h3><p>{message.body}</p>
+            {(campaignName || listName) && <small>{[campaignName, listName].filter(Boolean).join(" · ")}</small>}
+          </div>
+          {isReceived && !message.read_at && <button className="text-button" onClick={() => onMarkRead(message.id)}>Markér som læst</button>}
+        </article>;
+      })}
+      {!messages.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Ingen beskeder endnu" description={role === "admin" ? "Send en hurtig opdatering til hele teamet, en kampagne eller en leadliste." : "Beskeder fra din administrator vises her."} />}</div>}
+    </section>
   </div>;
 }
 

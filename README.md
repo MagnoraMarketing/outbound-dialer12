@@ -5,7 +5,7 @@ A Danish-language B2B CRM and outbound calling workspace built with Next.js, Sup
 ## Run locally
 
 1. Install Node.js 20+ and dependencies with `npm install`.
-2. In the shared Supabase project, add `nordcall` to **Project Settings → API → Exposed schemas** (keep existing schemas), then apply `supabase/migrations/20261005000000_initial_schema.sql` for a new setup, followed by any newer migrations in timestamp order. `20261005020000_campaigns_and_dialpad.sql` adds campaigns and lists; `20261005030000_team_campaign_assignments.sql` adds admin-managed user assignments; `20261005040000_campaign_leads.sql` links leads directly to campaigns and updates queue access rules. Nordcall tables live in the separate `nordcall` schema. Nordcall signups are marked explicitly so the auth trigger creates `nordcall.profiles` only for Nordcall users.
+2. In the shared Supabase project, add `nordcall` to **Project Settings → API → Exposed schemas** (keep existing schemas), then apply `supabase/migrations/20261005000000_initial_schema.sql` for a new setup, followed by any newer migrations in timestamp order. `20261005020000_campaigns_and_dialpad.sql` adds campaigns and lists; `20261005030000_team_campaign_assignments.sql` adds admin-managed user assignments; `20261005040000_campaign_leads.sql` links leads directly to campaigns; `20261005050000_budgets_and_team_messages.sql` adds meeting targets and persistent in-app messages. Nordcall tables live in the separate `nordcall` schema. Nordcall signups are marked explicitly so the auth trigger creates `nordcall.profiles` only for Nordcall users.
 3. Copy `.env.example` to `.env.local`, and add the project URL and anon key. Configure Telnyx server-side variables before enabling outbound calls.
 4. In Supabase Authentication → URL Configuration, add `http://localhost:3000/auth/callback` as a Redirect URL for local testing, and enable email/password sign-in. On the shared Supabase project, preserve its existing Site URL and redirect entries. The first Nordcall user can sign up and create a team; that user becomes the team administrator.
 5. Run `npm run dev` and open `http://localhost:3000`.
@@ -19,6 +19,8 @@ A Danish-language B2B CRM and outbound calling workspace built with Next.js, Sup
 - Admin-managed campaigns and campaign-specific lead lists; admins can assign each to individual team members and import leads directly to a selected member.
 - Manually created leads require a campaign and may optionally be added to one of its lead lists. Admins can create a list while adding a lead.
 - The Opkald workspace filters its queue to the selected campaign and optional lead list, supports manual dialing without a lead, and can create a confirmed lead in that campaign/list.
+- Weekly and monthly booked-meeting targets per seller, with optional campaign targets, individual progress on the dashboard and team progress/editing for admins.
+- Persistent in-app admin messages to the whole team, a campaign, or a lead list; unread items appear in the notification bell. Browser push is not used.
 - Manual Telnyx calls are stored in call history without creating placeholder leads.
 - Server-only Telnyx outbound call and hang-up requests, signed webhook verification, call records and outcomes.
 - Queue, callbacks, meetings and daily dashboard API surfaces.
