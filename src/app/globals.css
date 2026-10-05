@@ -63,6 +63,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .form-error, .form-success { margin: 0; padding: 10px 12px; border-radius: 7px; font-size: 12px; }
 .form-error { color: #ac4552; background: #fff2f3; }
 .form-success { color: #16795f; background: #eef9f5; }
+.auth-resend { justify-self: start; margin-top: -7px; }
 .setup-block { padding-top: 38px; }
 .setup-icon { display: flex; width: 43px; height: 43px; align-items: center; justify-content: center; margin-bottom: 23px; border-radius: 12px; color: #5267df; background: #f0f2ff; }
 .setup-block h1 { margin-top: 12px; font-size: 32px; }

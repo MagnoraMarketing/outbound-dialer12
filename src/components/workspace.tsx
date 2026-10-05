@@ -110,6 +110,8 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [canResendConfirmation, setCanResendConfirmation] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [page, setPage] = useState<Page>("dashboard");
   const [search, setSearch] = useState("");
@@ -202,8 +204,15 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("authError") === "confirmation") {
-      setAuthError("E-mailbekræftelsen kunne ikke gennemføres. Bed om et nyt link, eller prøv at logge ind.");
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const authError = params.get("authError") || params.get("error") || hashParams.get("error");
+    const errorCode = params.get("error_code") || hashParams.get("error_code");
+    if (authError || errorCode) {
+      const expired = errorCode === "otp_expired" || errorCode === "access_denied";
+      setAuthError(expired
+        ? "Bekræftelseslinket er udløbet eller allerede brugt. Send et nyt link nedenfor."
+        : "E-mailbekræftelsen kunne ikke gennemføres. Send et nyt link, eller prøv at logge ind.");
+      setCanResendConfirmation(true);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -293,10 +302,40 @@ export function Workspace({ configured }: { configured: boolean }) {
         }
       } else {
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-        if (loginError) throw loginError;
+        if (loginError) {
+          if (loginError.message.toLowerCase().includes("email not confirmed")) {
+            setCanResendConfirmation(true);
+            throw new Error("Bekræft din e-mail før login. Du kan sende et nyt bekræftelseslink nedenfor.");
+          }
+          throw loginError;
+        }
       }
     } catch (submitError) {
       setAuthError(submitError instanceof Error ? submitError.message : "Login mislykkedes. Prøv igen.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function resendConfirmation() {
+    if (!supabase || !authEmail.trim()) {
+      setAuthError("Skriv din e-mailadresse, så sender vi et nyt bekræftelseslink.");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthError("");
+    setAuthMessage("");
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: "signup",
+        email: authEmail.trim(),
+        options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (resendError) throw resendError;
+      setAuthMessage("Hvis adressen har en uafsluttet tilmelding, sender vi et nyt link. Tjek også spam-mappen.");
+      setCanResendConfirmation(false);
+    } catch (resendError) {
+      setAuthError(resendError instanceof Error ? resendError.message : "Kunne ikke sende et nyt link. Prøv igen.");
     } finally {
       setAuthBusy(false);
     }
@@ -646,10 +685,11 @@ export function Workspace({ configured }: { configured: boolean }) {
                   <label>Dit navn<input name="full_name" autoComplete="name" required placeholder="F.eks. Emma Jensen" /></label>
                   <label>Teamets navn<input name="team_name" required minLength={2} placeholder="F.eks. Nordisk Vækst" /></label>
                 </>}
-                <label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="dig@virksomhed.dk" /></label>
+                <label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="dig@virksomhed.dk" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label>
                 <label>Adgangskode<input name="password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={8} placeholder="Mindst 8 tegn" /></label>
                 {authError && <p className="form-error">{authError}</p>}
                 {authMessage && <p className="form-success">{authMessage}</p>}
+                {canResendConfirmation && authMode === "login" && <button type="button" className="text-button auth-resend" onClick={() => void resendConfirmation()} disabled={authBusy}>{authBusy ? "Sender nyt link …" : "Send nyt bekræftelseslink"}</button>}
                 <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? "Et øjeblik …" : authMode === "login" ? "Log ind" : "Opret team"} <ArrowRight size={16} /></button>
               </form>
               <div className="auth-switch">{authMode === "login" ? "Nyt på Nordcall?" : "Har du allerede en konto?"}
