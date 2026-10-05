@@ -201,6 +201,14 @@ export function Workspace({ configured }: { configured: boolean }) {
   }, [leadFilters, leadStatus, leadsPage, profile]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("authError") === "confirmation") {
+      setAuthError("E-mailbekræftelsen kunne ikke gennemføres. Bed om et nyt link, eller prøv at logge ind.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  useEffect(() => {
     const client = browserSupabase();
     setSupabase(client);
     if (!client) {
@@ -267,7 +275,12 @@ export function Workspace({ configured }: { configured: boolean }) {
         const teamName = String(form.get("team_name") ?? "").trim();
         if (!fullName || !teamName) throw new Error("Udfyld dit navn og teamets navn.");
         const { data, error: signUpError } = await supabase.auth.signUp({
-          email, password, options: { data: { full_name: fullName } },
+          email,
+          password,
+          options: {
+            data: { full_name: fullName },
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          },
         });
         if (signUpError) throw signUpError;
         if (!data.session) {
