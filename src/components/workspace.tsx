@@ -111,7 +111,6 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authEmail, setAuthEmail] = useState("");
-  const [canResendConfirmation, setCanResendConfirmation] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [page, setPage] = useState<Page>("dashboard");
   const [search, setSearch] = useState("");
@@ -212,7 +211,6 @@ export function Workspace({ configured }: { configured: boolean }) {
       setAuthError(expired
         ? "Bekræftelseslinket er udløbet eller allerede brugt. Send et nyt link nedenfor."
         : "E-mailbekræftelsen kunne ikke gennemføres. Send et nyt link, eller prøv at logge ind.");
-      setCanResendConfirmation(true);
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -236,8 +234,16 @@ export function Workspace({ configured }: { configured: boolean }) {
       const { data, error: profileError } = await client.from("profiles")
         .select("id, team_id, full_name, role").eq("id", currentUser.id).maybeSingle();
       if (!alive) return;
-      if (profileError) setAuthError("Brugerprofilen kunne ikke indlæses.");
-      else if (data) setProfile(data as Profile);
+      if (profileError) {
+        console.error("Nordcall profile lookup failed", profileError.code, profileError.message);
+        setAuthError(profileError.code === "PGRST106"
+          ? "Nordcall-databasen er ikke eksponeret i Supabase. Tilføj nordcall under Project Settings → API → Exposed schemas."
+          : "Brugerprofilen kunne ikke indlæses. Kontrollér, at Nordcall-migrationen er kørt, og at nordcall er eksponeret i Supabase.");
+      } else if (data) {
+        setProfile(data as Profile);
+      } else {
+        setAuthError("Din konto er bekræftet, men Nordcall-profilen mangler. Opret en Nordcall-konto eller kontakt administratoren.");
+      }
       setAuthLoading(false);
     };
     void client.auth.getUser().then(({ data }) => loadProfile(data.user));
@@ -304,7 +310,6 @@ export function Workspace({ configured }: { configured: boolean }) {
         const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
         if (loginError) {
           if (loginError.message.toLowerCase().includes("email not confirmed")) {
-            setCanResendConfirmation(true);
             throw new Error("Bekræft din e-mail før login. Du kan sende et nyt bekræftelseslink nedenfor.");
           }
           throw loginError;
@@ -333,7 +338,6 @@ export function Workspace({ configured }: { configured: boolean }) {
       });
       if (resendError) throw resendError;
       setAuthMessage("Hvis adressen har en uafsluttet tilmelding, sender vi et nyt link. Tjek også spam-mappen.");
-      setCanResendConfirmation(false);
     } catch (resendError) {
       setAuthError(resendError instanceof Error ? resendError.message : "Kunne ikke sende et nyt link. Prøv igen.");
     } finally {
@@ -689,7 +693,7 @@ export function Workspace({ configured }: { configured: boolean }) {
                 <label>Adgangskode<input name="password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={8} placeholder="Mindst 8 tegn" /></label>
                 {authError && <p className="form-error">{authError}</p>}
                 {authMessage && <p className="form-success">{authMessage}</p>}
-                {canResendConfirmation && authMode === "login" && <button type="button" className="text-button auth-resend" onClick={() => void resendConfirmation()} disabled={authBusy}>{authBusy ? "Sender nyt link …" : "Send nyt bekræftelseslink"}</button>}
+                {authMode === "login" && <button type="button" className="text-button auth-resend" onClick={() => void resendConfirmation()} disabled={authBusy}>{authBusy ? "Sender nyt link …" : "Send nyt bekræftelseslink"}</button>}
                 <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? "Et øjeblik …" : authMode === "login" ? "Log ind" : "Opret team"} <ArrowRight size={16} /></button>
               </form>
               <div className="auth-switch">{authMode === "login" ? "Nyt på Nordcall?" : "Har du allerede en konto?"}
