@@ -24,7 +24,7 @@ export async function GET() {
   let leadQuery = context.supabase.from("leads").select("id", { count: "exact", head: true }).is("deleted_at", null)
     .in("status", ["new", "to_call", "called", "no_answer"]);
   let activityQuery = context.supabase.from("calls").select("started_at, status, outcome").gte("started_at", weekStart.toISOString());
-  if (context.profile.role === "salesperson") {
+  if (context.profile.role !== "admin") {
     callQuery = callQuery.eq("user_id", context.user.id);
     leadQuery = leadQuery.eq("assigned_user_id", context.user.id);
     activityQuery = activityQuery.eq("user_id", context.user.id);
@@ -35,7 +35,7 @@ export async function GET() {
     context.supabase.from("callbacks").select("id", { count: "exact", head: true })
       .is("completed_at", null).lte("callback_at", new Date().toISOString()),
     context.supabase.from("meetings").select("id", { count: "exact", head: true }).gte("created_at", start),
-    context.profile.role === "salesperson"
+    context.profile.role !== "admin"
       ? Promise.resolve({ data: null, error: null })
       : context.supabase.from("profiles").select("id, full_name").eq("team_id", context.profile.team_id),
     activityQuery,
@@ -48,8 +48,8 @@ export async function GET() {
   const calls = callsResult.data ?? [];
   const connected = calls.filter((call) => ["answered", "completed"].includes(call.status) && call.outcome !== "no_answer" && call.outcome !== "busy");
   const conversations = calls.filter((call) => ["interested", "not_interested", "meeting_booked", "callback"].includes(call.outcome ?? ""));
-  const managers = new Map((teamResult.data ?? []).map((profile) => [profile.id, profile.full_name || "Uden navn"]));
-  const performance = context.profile.role === "salesperson" ? [] : Array.from(managers, ([userId, name]) => {
+  const members = new Map((teamResult.data ?? []).map((profile) => [profile.id, profile.full_name || "Uden navn"]));
+  const performance = context.profile.role !== "admin" ? [] : Array.from(members, ([userId, name]) => {
     const ownCalls = calls.filter((call) => call.user_id === userId);
     return {
       user_id: userId,

@@ -25,13 +25,13 @@ export async function GET(_request: Request, route: RouteContext) {
     console.error("Lead history query failed", failed.message);
     return apiError("Virksomhedens historik kunne ikke hentes.", 500);
   }
-  const canListen = context.profile.role !== "salesperson"
-    || Boolean(context.profile.recordings_enabled);
   const activities = [
     ...(calls.data ?? []).map((call) => ({
       id: call.id, kind: "call" as const, user_id: call.user_id, created_at: call.started_at,
       title: call.outcome || call.status, body: call.notes, duration_seconds: call.duration_seconds,
-      recording_url: canListen ? call.recording_url : null,
+      recording_url: context.profile.role === "admin" && call.recording_url
+        ? `/api/calls/${call.id}/recording`
+        : null,
     })),
     ...(notes.data ?? []).map((note) => ({
       id: note.id, kind: "note" as const, user_id: note.user_id, created_at: note.created_at,

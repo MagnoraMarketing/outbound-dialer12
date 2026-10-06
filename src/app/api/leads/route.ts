@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     && (!Number.isInteger(body.employee_count) || Number(body.employee_count) < 0)) {
     return apiError("Antallet af medarbejdere skal være et heltal på 0 eller derover.");
   }
-  const assignedUserId = context.profile.role === "salesperson" ? context.user.id
+  const assignedUserId = context.profile.role !== "admin" ? context.user.id
     : typeof body.assigned_user_id === "string" ? body.assigned_user_id : context.user.id;
   let campaignId = typeof body.campaign_id === "string" ? body.campaign_id : null;
   let leadListId: string | null = null;

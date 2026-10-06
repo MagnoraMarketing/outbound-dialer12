@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean };
+type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
 type Lead = {
   id: string; company_name: string; cvr: string | null; contact_person: string | null; phone: string;
   email?: string | null; website?: string | null; address?: string | null; city: string | null;
@@ -63,13 +63,19 @@ type LeadHistoryEntry = {
 type Callback = { id: string; lead_id: string; callback_at: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type Meeting = { id: string; meeting_at: string; meeting_type: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type TeamMember = {
-  id: string; full_name: string; role: Profile["role"]; created_at: string; recordings_enabled: boolean;
+  id: string; full_name: string; role: Profile["role"]; created_at: string; recordings_enabled: boolean; call_recording_enabled: boolean;
   campaign_ids?: string[]; lead_list_ids?: string[];
 };
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
 type Campaign = { id: string; name: string; created_at: string };
 type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
 type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
+type ManagedRole = "admin" | "user";
+type AdminOverview = {
+  period_start: string;
+  totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
+  campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
+};
 type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
@@ -141,18 +147,18 @@ function formatDuration(value: number) {
   return minutes ? `${minutes} min ${seconds} sek` : `${seconds} sek`;
 }
 function friendlyRole(role: string) {
-  return role === "admin" ? "Administrator" : role === "manager" ? "Leder" : "Sælger";
+  return role === "admin" ? "Administrator" : "Bruger";
 }
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "S";
 }
 
-export function Workspace({ configured }: { configured: boolean }) {
+export function Workspace({ configured, adminEntry = false }: { configured: boolean; adminEntry?: boolean }) {
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "forgot" | "recovery">("login");
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authEmail, setAuthEmail] = useState("");
@@ -164,6 +170,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
   const [budgetReport, setBudgetReport] = useState<BudgetReport | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsTotal, setLeadsTotal] = useState(0);
@@ -196,6 +203,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [callStartBusy, setCallStartBusy] = useState(false);
   const [voiceState, setVoiceState] = useState<"disconnected" | "connecting" | "ready">("disconnected");
   const [callStarted, setCallStarted] = useState<number | null>(null);
+  const [callRecordingEnabled, setCallRecordingEnabled] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [callNote, setCallNote] = useState("");
   const [callbackAt, setCallbackAt] = useState("");
@@ -225,6 +233,10 @@ export function Workspace({ configured }: { configured: boolean }) {
   const telnyxCallRef = useRef<TelnyxCall | null>(null);
   const callRecordIdRef = useRef<string | null>(null);
   const callerNumberRef = useRef<string | null>(null);
+  const callRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingCallIdRef = useRef<string | null>(null);
+  const recordingAudioContextRef = useRef<AudioContext | null>(null);
   const callStatusUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const localAudioStreamRef = useRef<MediaStream | null>(null);
 
@@ -233,14 +245,18 @@ export function Workspace({ configured }: { configured: boolean }) {
     setLoading(true);
     try {
       if (activePage === "dashboard") {
-        const [result, budgets, messages] = await Promise.all([
+        const [result, budgets, messages, overview] = await Promise.all([
           api<{ data: DashboardData }>("/api/dashboard"),
           api<BudgetReport>("/api/budgets"),
           api<{ data: TeamMessage[] }>("/api/messages"),
+          profile?.role === "admin"
+            ? api<{ data: AdminOverview }>("/api/admin/overview")
+            : Promise.resolve(null),
         ]);
         setDashboard(result.data);
         setBudgetReport(budgets);
         setTeamMessages(messages.data);
+        if (overview) setAdminOverview(overview.data);
       } else if (activePage === "budget") {
         setBudgetReport(await api<BudgetReport>("/api/budgets"));
       } else if (activePage === "leads") {
@@ -254,7 +270,7 @@ export function Workspace({ configured }: { configured: boolean }) {
         const result = await api<{ data: Lead[]; count: number }>(`/api/leads?${params.toString()}`);
         setLeads(result.data);
         setLeadsTotal(result.count);
-        if (profile?.role === "admin" || profile?.role === "manager") {
+        if (profile?.role === "admin") {
           const members = await api<{ data: TeamMember[] }>("/api/team");
           setTeam(members.data);
         }
@@ -360,6 +376,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    if (hashParams.get("type") === "recovery") setAuthMode("recovery");
     const authError = params.get("authError") || params.get("error") || hashParams.get("error");
     const errorCode = params.get("error_code") || hashParams.get("error_code");
     if (authError || errorCode) {
@@ -388,7 +405,7 @@ export function Workspace({ configured }: { configured: boolean }) {
         return;
       }
       const { data, error: profileError } = await client.from("profiles")
-        .select("id, team_id, full_name, role, recordings_enabled").eq("id", currentUser.id).maybeSingle();
+        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled").eq("id", currentUser.id).maybeSingle();
       if (!alive) return;
       if (profileError) {
         console.error("Nordcall profile lookup failed", profileError.code, profileError.message);
@@ -396,6 +413,10 @@ export function Workspace({ configured }: { configured: boolean }) {
           ? "Nordcall-databasen er ikke eksponeret i Supabase. Tilføj nordcall under Project Settings → API → Exposed schemas."
           : "Brugerprofilen kunne ikke indlæses. Kontrollér, at Nordcall-migrationen er kørt, og at nordcall er eksponeret i Supabase.");
       } else if (data) {
+        if (data.role === "admin" && data.team_id && !adminEntry) {
+          window.location.replace("/admin");
+          return;
+        }
         setProfile(data as Profile);
       } else {
         setAuthError("Din konto er bekræftet, men Nordcall-profilen mangler. Opret en Nordcall-konto eller kontakt administratoren.");
@@ -403,14 +424,15 @@ export function Workspace({ configured }: { configured: boolean }) {
       setAuthLoading(false);
     };
     void client.auth.getUser().then(({ data }) => loadProfile(data.user));
-    const { data: listener } = client.auth.onAuthStateChange((_event, session) => {
+    const { data: listener } = client.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") setAuthMode("recovery");
       void loadProfile(session?.user ?? null);
     });
     return () => {
       alive = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, [adminEntry]);
 
   useEffect(() => {
     if (user && profile?.team_id) void loadPageData(page, search);
@@ -433,6 +455,7 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   useEffect(() => () => {
     localAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    stopCallRecording();
     const client = voiceClientRef.current;
     if (client) void client.disconnect().catch((disconnectError: unknown) => {
       console.error("Telnyx WebRTC client could not disconnect", disconnectError);
@@ -488,8 +511,20 @@ export function Workspace({ configured }: { configured: boolean }) {
               : ["hangup", "destroy", "purge", "9", "10", "11"].includes(state) ? "completed" : null;
         const callId = callRecordIdRef.current;
         if (!status || !callId) return;
+        if (status === "answered" && profile?.call_recording_enabled) {
+          try {
+            startCallRecording(callId, sdkCall);
+          } catch (recordingError) {
+            const message = recordingError instanceof Error ? recordingError.message : "Opkaldsoptagelsen kunne ikke startes.";
+            setError(message);
+            void sdkCall.hangup().catch((hangupError: unknown) => {
+              console.error("Call could not be stopped after recording setup failed", hangupError);
+            });
+          }
+        }
         setActiveCall((current) => current?.id === callId ? { ...current, status } : current);
         if (["completed", "failed", "busy", "no_answer", "cancelled"].includes(status)) {
+          stopCallRecording();
           setCallStarted(null);
           localAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
           localAudioStreamRef.current = null;
@@ -533,11 +568,84 @@ export function Workspace({ configured }: { configured: boolean }) {
     }
   }
 
+  function startCallRecording(callId: string, sdkCall: TelnyxCall) {
+    if (recordingCallIdRef.current === callId) return;
+    if (!window.MediaRecorder) throw new Error("Denne browser understøtter ikke sikker samtaleoptagelse. Brug Chrome eller Edge.");
+    const localStream = sdkCall.localStream;
+    const remoteStream = sdkCall.remoteStream;
+    if (!localStream?.getAudioTracks().length || !remoteStream?.getAudioTracks().length) {
+      throw new Error("Opkaldets lydspor er ikke klar til optagelse. Opkaldet afsluttes uden at blive gemt.");
+    }
+    const audioContext = new AudioContext();
+    const mixedAudio = audioContext.createMediaStreamDestination();
+    audioContext.createMediaStreamSource(localStream).connect(mixedAudio);
+    audioContext.createMediaStreamSource(remoteStream).connect(mixedAudio);
+    const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]
+      .find((candidate) => MediaRecorder.isTypeSupported(candidate));
+    if (!mimeType) {
+      void audioContext.close();
+      throw new Error("Browseren understøtter ikke et sikkert lydformat til optagelsen.");
+    }
+    const recorder = new MediaRecorder(mixedAudio.stream, { mimeType });
+    recordingCallIdRef.current = callId;
+    recordingAudioContextRef.current = audioContext;
+    recordingChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size) recordingChunksRef.current.push(event.data);
+    };
+    recorder.onerror = (event) => {
+      console.error("Browser call recording failed", event);
+      setError("Opkaldet blev gennemført, men browseren kunne ikke optage lyden.");
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType });
+      recordingChunksRef.current = [];
+      callRecorderRef.current = null;
+      recordingCallIdRef.current = null;
+      void (async () => {
+        if (!blob.size) throw new Error("Opkaldet sluttede uden en brugbar optagelse.");
+        const contentType = blob.type.split(";")[0];
+        const { data: upload } = await api<{ data: { path: string; token: string; content_type: string } }>(`/api/calls/${callId}/recording`, {
+          method: "POST",
+          body: JSON.stringify({ action: "prepare", content_type: contentType }),
+        });
+        const storageClient = supabase ?? browserSupabase();
+        if (!storageClient) throw new Error("Supabase Storage er ikke tilgængelig.");
+        const { error: uploadError } = await storageClient.storage.from("call-recordings")
+          .uploadToSignedUrl(upload.path, upload.token, blob, { contentType: upload.content_type });
+        if (uploadError) throw new Error("Optagelsen kunne ikke uploades sikkert: " + uploadError.message);
+        await api(`/api/calls/${callId}/recording`, {
+          method: "POST",
+          body: JSON.stringify({ action: "finalize", path: upload.path }),
+        });
+        setNotice("Opkaldsoptagelsen er gemt sikkert til administratoren.");
+      })().catch((uploadError: unknown) => {
+        console.error("Call recording upload failed", uploadError);
+        setError(uploadError instanceof Error ? uploadError.message : "Opkaldsoptagelsen kunne ikke gemmes.");
+      }).finally(() => {
+        if (recordingAudioContextRef.current === audioContext) recordingAudioContextRef.current = null;
+        void audioContext.close().catch((closeError: unknown) => {
+          console.error("Call recording audio context could not close", closeError);
+        });
+      });
+    };
+    recorder.start(1000);
+    callRecorderRef.current = recorder;
+  }
+
+  function stopCallRecording() {
+    const recorder = callRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }
+
   async function startWebRtcCall(phone: string, leadId?: string) {
     callRecordIdRef.current = null;
     telnyxCallRef.current = null;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Denne browser kan ikke bruge mikrofonen. Åbn Nordcall via HTTPS i en understøttet browser.");
+    }
+    if (profile?.call_recording_enabled && !window.MediaRecorder) {
+      throw new Error("Denne browser understøtter ikke samtaleoptagelse. Brug Chrome eller Edge, eller bed administratoren om hjælp.");
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -594,7 +702,29 @@ export function Workspace({ configured }: { configured: boolean }) {
     const email = String(form.get("email") ?? "").trim();
     const password = String(form.get("password") ?? "");
     try {
-      if (authMode === "signup") {
+      if (authMode === "forgot") {
+        if (!email) throw new Error("Skriv din e-mailadresse først.");
+        const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "");
+        const appUrl = configuredAppUrl?.startsWith("https://") ? configuredAppUrl : window.location.origin;
+        const returnPath = window.location.pathname === "/admin" ? "/admin" : "/";
+        const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${appUrl}${returnPath}`,
+        });
+        if (recoveryError) throw recoveryError;
+        setAuthMessage("Hvis adressen findes, har vi sendt et link til nulstilling. Tjek også spam-mappen.");
+      } else if (authMode === "recovery") {
+        const confirmation = String(form.get("password_confirmation") ?? "");
+        if (password.length < 8) throw new Error("Adgangskoden skal være mindst 8 tegn.");
+        if (password !== confirmation) throw new Error("Adgangskoderne er ikke ens.");
+        const { error: updateError } = await supabase.auth.updateUser({ password });
+        if (updateError) throw updateError;
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) console.error("Could not sign out after password recovery", signOutError.message);
+        setUser(null);
+        setProfile(null);
+        setAuthMode("login");
+        setAuthMessage("Adgangskoden er ændret. Du kan nu logge ind.");
+      } else if (authMode === "signup") {
         const fullName = String(form.get("full_name") ?? "").trim();
         const teamName = String(form.get("team_name") ?? "").trim();
         if (!fullName || !teamName) throw new Error("Udfyld dit navn og teamets navn.");
@@ -683,7 +813,7 @@ export function Workspace({ configured }: { configured: boolean }) {
       const { error: teamError } = await supabase.rpc("create_team_for_current_user", { team_name: teamName });
       if (teamError) throw teamError;
       const { data, error: profileError } = await supabase.from("profiles")
-        .select("id, team_id, full_name, role, recordings_enabled").eq("id", user.id).single();
+        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled").eq("id", user.id).single();
       if (profileError) throw new Error("Dit team blev oprettet, men profilen kunne ikke indlæses. Genindlæs siden.");
       setProfile(data as Profile);
     } catch (teamError) {
@@ -893,6 +1023,8 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   async function beginCall() {
     if (!activeLead) return;
+    if (profile?.call_recording_enabled
+      && !window.confirm("Dette opkald optages, fordi administratoren har aktiveret optagelse for din konto. Bekræft, at du har informeret deltageren, før du fortsætter.")) return;
     setCallStartBusy(true);
     setError("");
     try {
@@ -912,6 +1044,8 @@ export function Workspace({ configured }: { configured: boolean }) {
       setError("Indtast et telefonnummer.");
       return;
     }
+    if (profile?.call_recording_enabled
+      && !window.confirm("Dette opkald optages, fordi administratoren har aktiveret optagelse for din konto. Bekræft, at du har informeret deltageren, før du fortsætter.")) return;
     setCallStartBusy(true);
     setError("");
     try {
@@ -1199,6 +1333,27 @@ export function Workspace({ configured }: { configured: boolean }) {
     return <div className="auth-screen"><div className="loading-orbit" /><p>Gør dit salgsteam klar …</p></div>;
   }
 
+  if (configured && authMode === "recovery") {
+    return <div className="auth-screen"><div className="auth-glow" /><div className="auth-card">
+      <Brand /><div className="auth-heading"><span className="eyebrow">KONTOGENDANNELSE</span><h1>Vælg en ny adgangskode</h1><p>Brug mindst 8 tegn.</p></div>
+      <form className="auth-form" onSubmit={submitAuth}>
+        <label>Ny adgangskode<input name="password" type="password" autoComplete="new-password" required minLength={8} placeholder="Mindst 8 tegn" /></label>
+        <label>Gentag adgangskode<input name="password_confirmation" type="password" autoComplete="new-password" required minLength={8} placeholder="Gentag adgangskoden" /></label>
+        {authError && <p className="form-error">{authError}</p>}
+        {authMessage && <p className="form-success">{authMessage}</p>}
+        <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? "Gemmer …" : "Gem ny adgangskode"} <ArrowRight size={16} /></button>
+      </form>
+    </div><div className="auth-caption">Bygget til gode samtaler. <span>Designed in Copenhagen.</span></div></div>;
+  }
+
+  if (adminEntry && user && profile && (profile.role !== "admin" || !profile.team_id)) {
+    return <div className="auth-screen"><div className="auth-glow" /><div className="auth-card">
+      <Brand /><div className="auth-heading"><span className="eyebrow">ADMINISTRATORADGANG</span><h1>Du har ikke adgang</h1><p>Brug en administrator konto med et aktivt team til /admin.</p></div>
+      <button className="button button-secondary button-wide" onClick={() => { window.location.href = "/"; }}>Gå til brugerlogin</button>
+      <button className="text-button auth-resend" onClick={() => void logout()}>Log ud</button>
+    </div><div className="auth-caption">Adgang styres af din kontos rolle, ikke af URL&apos;en.</div></div>;
+  }
+
   if (configured && user && profile && !profile.team_id) {
     return <div className="auth-screen"><div className="auth-glow" /><div className="auth-card">
       <Brand /><div className="auth-heading"><span className="eyebrow">NÆSTEN KLAR</span><h1>Giv dit team et navn</h1><p>Du bliver administrator for din nye arbejdsplads.</p></div>
@@ -1227,25 +1382,30 @@ export function Workspace({ configured }: { configured: boolean }) {
           ) : (
             <>
               <div className="auth-heading">
-                <span className="eyebrow">{authMode === "login" ? "VELKOMMEN TILBAGE" : "DIT NÆSTE SALG STARTER HER"}</span>
-                <h1>{authMode === "login" ? "Log ind på Nordcall" : "Opret dit salgsteam"}</h1>
-                <p>{authMode === "login" ? "Dit team venter på dig." : "Start med en sikker arbejdsplads til dit team."}</p>
+                <span className="eyebrow">{authMode === "signup" ? "DIT NÆSTE SALG STARTER HER" : authMode === "forgot" ? "KONTOGENDANNELSE" : adminEntry ? "SIKKER ADMINISTRATORADGANG" : "VELKOMMEN TILBAGE"}</span>
+                <h1>{authMode === "signup" ? "Opret dit salgsteam" : authMode === "forgot" ? "Nulstil adgangskode" : adminEntry ? "Administratorlogin" : "Log ind på Nordcall"}</h1>
+                <p>{authMode === "signup" ? "Start med en sikker arbejdsplads til dit team." : authMode === "forgot" ? "Vi sender et sikkert link til din e-mailadresse." : adminEntry ? "Log ind med en administrator konto." : "Dit team venter på dig."}</p>
               </div>
               <form className="auth-form" onSubmit={submitAuth}>
-                {authMode === "signup" && <>
+                {authMode === "signup" && !adminEntry && <>
                   <label>Dit navn<input name="full_name" autoComplete="name" required placeholder="F.eks. Emma Jensen" /></label>
                   <label>Teamets navn<input name="team_name" required minLength={2} placeholder="F.eks. Nordisk Vækst" /></label>
                 </>}
                 <label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="dig@virksomhed.dk" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label>
-                <label>Adgangskode<input name="password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={8} placeholder="Mindst 8 tegn" /></label>
+                {authMode !== "forgot" && <label>Adgangskode<input name="password" type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} required minLength={8} placeholder="Mindst 8 tegn" /></label>}
                 {authError && <p className="form-error">{authError}</p>}
                 {authMessage && <p className="form-success">{authMessage}</p>}
-                {authMode === "login" && <button type="button" className="text-button auth-resend" onClick={() => void resendConfirmation()} disabled={authBusy}>{authBusy ? "Sender nyt link …" : "Send nyt bekræftelseslink"}</button>}
-                <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? "Et øjeblik …" : authMode === "login" ? "Log ind" : "Opret team"} <ArrowRight size={16} /></button>
+                {authMode === "login" && <>
+                  <button type="button" className="text-button auth-resend" onClick={() => { setAuthMode("forgot"); setAuthError(""); setAuthMessage(""); }} disabled={authBusy}>Glemt adgangskode?</button>
+                  <button type="button" className="text-button auth-resend" onClick={() => void resendConfirmation()} disabled={authBusy}>{authBusy ? "Sender nyt link …" : "Send nyt bekræftelseslink"}</button>
+                </>}
+                <button className="button button-primary button-wide" disabled={authBusy}>{authBusy ? "Et øjeblik …" : authMode === "signup" ? "Opret team" : authMode === "forgot" ? "Send nulstillingslink" : "Log ind"} <ArrowRight size={16} /></button>
               </form>
-              <div className="auth-switch">{authMode === "login" ? "Nyt på Nordcall?" : "Har du allerede en konto?"}
-                <button onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); setAuthMessage(""); }}>{authMode === "login" ? "Opret et team" : "Log ind"}</button>
-              </div>
+              {!adminEntry && (authMode === "login" || authMode === "signup")
+                ? <div className="auth-switch">{authMode === "login" ? "Nyt på Nordcall?" : "Har du allerede en konto?"}
+                  <button onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); setAuthMessage(""); }}>{authMode === "login" ? "Opret et team" : "Log ind"}</button>
+                </div>
+                : <div className="auth-switch"><button onClick={() => { window.location.href = adminEntry ? "/" : "/admin"; }}>{adminEntry ? "Brugerlogin" : "Adminlogin"}</button></div>}
               <div className="auth-privacy"><CheckCircle2 size={15} /> Data forbliver under dit teams adgangskontrol</div>
             </>
           )}
@@ -1279,7 +1439,7 @@ export function Workspace({ configured }: { configured: boolean }) {
           {navGroups.map((group) => {
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
-              && (item.id !== "team" || profile.role !== "salesperson"));
+              && (item.id !== "team" || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
@@ -1320,6 +1480,8 @@ export function Workspace({ configured }: { configured: boolean }) {
             data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
             budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
           />}
+          {page === "dashboard" && profile.role === "admin" && adminOverview
+            && <AdminCampaignOverview overview={adminOverview} onManageTeam={() => setPage("team")} />}
           {page === "budget" && <BudgetView
             report={budgetReport} loading={loading} userId={user.id} role={profile.role}
             onSave={saveCampaignBudget} onRecord={recordBudgetEvent}
@@ -1366,10 +1528,11 @@ export function Workspace({ configured }: { configured: boolean }) {
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
             budgets={budgetReport} onSaveBudget={saveBudget}
             onInvite={() => setModal("invite")}
-            onSave={async (memberId, fullName, role, campaignIds, leadListIds) => {
+            onSave={async (memberId, fullName, role, campaignIds, leadListIds, callRecordingEnabled) => {
               try {
                 await api("/api/team", { method: "PATCH", body: JSON.stringify({
                   user_id: memberId, full_name: fullName, role, campaign_ids: campaignIds, lead_list_ids: leadListIds,
+                  call_recording_enabled: callRecordingEnabled,
                 }) });
                 setNotice("Brugerprofil og tildelinger er gemt.");
                 void loadPageData("team");
@@ -1511,6 +1674,42 @@ function DashboardView({ data, loading, name, role, userId, budgets, setPage, on
   </div>;
 }
 
+function AdminCampaignOverview({ overview, onManageTeam }: {
+  overview: AdminOverview; onManageTeam: () => void;
+}) {
+  const metricCards = [
+    { title: "Opkald", value: overview.totals.calls.toLocaleString("da-DK"), icon: PhoneCall, tone: "blue" },
+    { title: "Forbundne", value: overview.totals.connected.toLocaleString("da-DK"), icon: Headphones, tone: "green" },
+    { title: "Bookede møder", value: overview.totals.meetings.toLocaleString("da-DK"), icon: CalendarDays, tone: "purple" },
+    { title: "Aktive brugere", value: overview.totals.users.toLocaleString("da-DK"), icon: Users, tone: "amber" },
+  ];
+  return <section className="admin-insights">
+    <div className="admin-insights-heading">
+      <div><span className="eyebrow">ADMINISTRATOR · SENESTE 30 DAGE</span><h2>Hele teamet. Ét klart overblik.</h2><p>Resultater på tværs af teamet og hver enkelt kampagne.</p></div>
+      <button className="button button-secondary" onClick={onManageTeam}><Users size={15} /> Administrér brugere</button>
+    </div>
+    <div className="admin-metric-grid">{metricCards.map(({ title, value, icon: Icon, tone }) =>
+      <article className="admin-metric-card" key={title}>
+        <span className={`admin-metric-icon admin-tone-${tone}`}><Icon size={17} /></span>
+        <span>{title}</span><strong>{value}</strong>
+      </article>,
+    )}</div>
+    <section className="panel admin-campaign-panel">
+      <div className="panel-heading"><div><span className="panel-eyebrow">KAMPAGNEPERFORMANCE</span><h2>Resultater fordelt på kampagner</h2></div><span className="admin-date-chip">30 dage</span></div>
+      <div className="table-scroll"><table><thead><tr><th>Kampagne</th><th>Opkald</th><th>Forbundne</th><th>Møder</th><th>Taletid</th></tr></thead>
+        <tbody>{overview.campaigns.map((campaign) => <tr key={campaign.id}>
+          <td><strong>{campaign.name}</strong></td><td>{campaign.calls.toLocaleString("da-DK")}</td>
+          <td>{campaign.connected.toLocaleString("da-DK")}</td><td>{campaign.meetings.toLocaleString("da-DK")}</td>
+          <td>{formatDuration(campaign.talk_time)}</td>
+        </tr>)}
+          {!overview.campaigns.length && <tr><td colSpan={5}>Opret en kampagne for at se kampagnestatistik her.</td></tr>}
+        </tbody>
+      </table></div>
+      <div className="admin-insights-footer"><span><Timer size={14} /> Samlet taletid: {formatDuration(overview.totals.talk_time)}</span><span>Opkald uden kampagne indgår kun i totalen.</span></div>
+    </section>
+  </section>;
+}
+
 function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
   report: BudgetReport | null; loading: boolean; userId: string; role: Profile["role"];
   onSave: (userId: string, campaignId: string, settings: CampaignBudgetSettings) => void;
@@ -1547,7 +1746,7 @@ function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
   const visibleActivities = (report?.activities ?? []).filter((activity) =>
     activity.campaign_id === campaignId && (role === "admin" ? activity.user_id === selectedUserId : activity.user_id === userId),
   );
-  const userName = members.find((member) => member.id === selectedUserId)?.full_name || "Sælger";
+  const userName = members.find((member) => member.id === selectedUserId)?.full_name || "Bruger";
 
   return <div className="view budget-view">
     <div className="page-heading"><div><span className="eyebrow">DIT FOKUS · DINE RESULTATER</span><h1>Budget</h1><p>Sæt et enkelt ugemål, følg aktiviteterne live, og se hvad det giver i provision.</p></div><Target size={21} className="heading-muted" /></div>
@@ -1565,7 +1764,7 @@ function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
             commission_per_sale: activityMode === "meeting" ? 0 : Number(saleCommission),
           });
         }}>
-          {role === "admin" && <label>Sælger<select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+          {role === "admin" && <label>Bruger<select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
             {members.map((member) => <option key={member.id} value={member.id}>{member.full_name || "Uden navn"} · {friendlyRole(member.role)}</option>)}
           </select></label>}
           <label>Kampagne<select required value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
@@ -1683,7 +1882,7 @@ function LeadsView({ leads, total, page, onPage, loading, status, setStatus, fil
         <label>Medarbejdere til<input type="number" min="0" value={filters.employees_max} onChange={(event) => setFilters({ ...filters, employees_max: event.target.value })} placeholder="Maks." /></label>
         <label>Sidst kontaktet efter<input type="date" value={filters.last_contacted_after} onChange={(event) => setFilters({ ...filters, last_contacted_after: event.target.value })} /></label>
         <label>Callback fra<input type="date" value={filters.callback_after} onChange={(event) => setFilters({ ...filters, callback_after: event.target.value })} /></label>
-        {profile.role !== "salesperson" && <label>Sælger<select value={filters.assigned_user_id} onChange={(event) => setFilters({ ...filters, assigned_user_id: event.target.value })}>
+        {profile.role === "admin" && <label>Bruger<select value={filters.assigned_user_id} onChange={(event) => setFilters({ ...filters, assigned_user_id: event.target.value })}>
           <option value="">Alle sælgere</option><option value="unassigned">Ikke tildelt</option>
           {members.map((member) => <option value={member.id} key={member.id}>{member.full_name || "Uden navn"}</option>)}
         </select></label>}
@@ -1995,7 +2194,7 @@ function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInv
   members: TeamMember[]; loading: boolean; role: Profile["role"]; campaigns: Campaign[]; leadLists: LeadList[];
   budgets: BudgetReport | null;
   onInvite: () => void;
-  onSave: (userId: string, fullName: string, role: Profile["role"], campaignIds: string[], leadListIds: string[]) => void;
+  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean) => void;
   onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
   return <div className="view">
@@ -2008,7 +2207,7 @@ function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInv
       {!members.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dit team begynder med dig" description="Invitér teammedlemmer for at tildele kampagner og leadlister." />}</div>}
     </div>
     {role === "admin" && budgets && <TeamBudgetAdmin report={budgets} onSave={onSaveBudget} />}
-    <div className="privacy-foot"><CheckCircle2 size={14} /> Sælgere får kun adgang til tildelte kampagner, leadlister og leads. Rolleændringer kræver administratoradgang.</div>
+    <div className="privacy-foot"><CheckCircle2 size={14} /> Brugere får kun adgang til tildelte kampagner, leadlister og leads. Rolleændringer kræver administratoradgang.</div>
   </div>;
 }
 
@@ -2166,17 +2365,19 @@ function MessagesView({ messages, loading, userId, role, campaigns, leadLists, o
 
 function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
   member: TeamMember; index: number; campaigns: Campaign[]; leadLists: LeadList[];
-  onSave: (userId: string, fullName: string, role: Profile["role"], campaignIds: string[], leadListIds: string[]) => void;
+  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean) => void;
 }) {
   const [fullName, setFullName] = useState(member.full_name);
-  const [role, setRole] = useState(member.role);
+  const [role, setRole] = useState<ManagedRole>(member.role === "admin" ? "admin" : "user");
   const [campaignIds, setCampaignIds] = useState(member.campaign_ids ?? []);
   const [leadListIds, setLeadListIds] = useState(member.lead_list_ids ?? []);
+  const [callRecordingEnabled, setCallRecordingEnabled] = useState(member.call_recording_enabled);
   useEffect(() => {
     setFullName(member.full_name);
-    setRole(member.role);
+    setRole(member.role === "admin" ? "admin" : "user");
     setCampaignIds(member.campaign_ids ?? []);
     setLeadListIds(member.lead_list_ids ?? []);
+    setCallRecordingEnabled(member.call_recording_enabled);
   }, [member]);
   const toggle = (ids: string[], setIds: (next: string[]) => void, id: string) => {
     setIds(ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
@@ -2185,8 +2386,8 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
     <div className="admin-member-heading">
       <div className={`avatar avatar-${index % 4}`}>{initials(fullName || "S")}</div>
       <label>Navn<input maxLength={120} value={fullName} onChange={(event) => setFullName(event.target.value)} /></label>
-      <label>Rolle<select className="member-role-select" value={role} onChange={(event) => setRole(event.target.value as Profile["role"])}>
-        <option value="salesperson">Sælger</option><option value="manager">Leder</option><option value="admin">Administrator</option>
+      <label>Rolle<select className="member-role-select" value={role} onChange={(event) => setRole(event.target.value as ManagedRole)}>
+        <option value="user">Bruger</option><option value="admin">Administrator</option>
       </select></label>
       <span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span>
     </div>
@@ -2204,8 +2405,9 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
         </label>) : <small>Leadlister vises, når de er oprettet.</small>}
       </fieldset>
     </div>
+    <label className="recording-permission"><input type="checkbox" checked={callRecordingEnabled} onChange={(event) => setCallRecordingEnabled(event.target.checked)} /> Optag denne brugers WebRTC-opkald</label>
     <div className="admin-member-footer"><span>{campaignIds.length} kampagner · {leadListIds.length} leadlister tildelt</span>
-      <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds)}>Gem ændringer</button>
+      <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds, callRecordingEnabled)}>Gem ændringer</button>
     </div>
   </section>;
 }
@@ -2219,8 +2421,8 @@ function SettingsView({ user, profile }: { user: User; profile: Profile }) {
       <div className="settings-callout"><CheckCircle2 size={16} /><p>Adgangskoder og sessioner håndteres sikkert af Supabase Auth. Kontakt din administrator for rolleændringer.</p></div>
     </section>
     <section className="panel settings-panel"><div className="panel-heading"><div><span className="panel-eyebrow">TELEFONI</span><h2>Opkaldsopsætning</h2></div><Phone size={16} className="heading-muted" /></div>
-      <SettingLine label="Telefoniudbyder" value="Telnyx" /><SettingLine label="Forbindelse" value="Serverkonfigureret" /><SettingLine label="Optagelse" value="Deaktiveret" />
-      <div className="settings-callout settings-warning"><CircleHelp size={16} /><p>Telnyx-nøgler opbevares kun i serverens miljøvariabler. Optagelse er ikke aktiveret. Sørg for at følge relevante telemarketing- og persondataregler.</p></div>
+      <SettingLine label="Telefoniudbyder" value="Telnyx" /><SettingLine label="Forbindelse" value="Serverkonfigureret" /><SettingLine label="Opkald optages" value={profile.call_recording_enabled ? "Ja · administratoren har aktiveret optagelse" : "Nej"} />
+      <div className="settings-callout settings-warning"><CircleHelp size={16} /><p>Optagelse aktiveres kun af en administrator pr. bruger. Informér deltagerne, og afklar samtykke, formål og opbevaring før optagelse aktiveres.</p></div>
     </section></div>
   </div>;
 }

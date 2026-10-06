@@ -15,9 +15,10 @@ function getTelnyxConfig() {
   const apiKey = process.env.TELNYX_API_KEY;
   const connectionId = process.env.TELNYX_WEBRTC_CONNECTION_ID;
   const callerNumber = process.env.TELNYX_PHONE_NUMBER;
-  if (!apiKey || !connectionId || !callerNumber) {
-    throw new Error("Telnyx WebRTC mangler serveropsætning. Kontakt administratoren.");
+  if (!apiKey || !connectionId) {
+    throw new Error("Telnyx WebRTC mangler TELNYX_API_KEY eller TELNYX_WEBRTC_CONNECTION_ID.");
   }
+  if (!callerNumber) throw new Error("Tilføj TELNYX_PHONE_NUMBER i Vercel, før du starter opkald.");
   const normalizedCallerNumber = callerNumber.trim().replace(/[\s().-]/g, "");
   if (!/^\+[1-9]\d{7,14}$/.test(normalizedCallerNumber)) {
     throw new Error("TELNYX_PHONE_NUMBER skal være et gyldigt nummer i internationalt format.");

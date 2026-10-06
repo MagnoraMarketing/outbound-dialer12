@@ -15,7 +15,7 @@ export async function PATCH(request: Request, route: RouteContext) {
   if (isLeadStatus(body.status)) update.status = body.status;
   if (typeof body.notes === "string") update.notes = body.notes.slice(0, 5000);
   if (typeof body.assigned_user_id === "string" || body.assigned_user_id === null) {
-    if (context.profile.role === "salesperson") return apiError("Kun administratorer og ledere kan ændre ansvarlig.", 403);
+    if (context.profile.role !== "admin") return apiError("Kun administratorer kan ændre ansvarlig.", 403);
     if (typeof body.assigned_user_id === "string") {
       const { data: assigned, error: assignedError } = await context.supabase.from("profiles")
         .select("id").eq("id", body.assigned_user_id).eq("team_id", context.profile.team_id).maybeSingle();

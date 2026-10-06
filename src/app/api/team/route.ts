@@ -5,20 +5,11 @@ export async function GET() {
   const result = await requireContext();
   if ("response" in result) return result.response;
   const { context } = result;
-  if (context.profile.role === "salesperson") return apiError("Kun ledere og administratorer har adgang til teamet.", 403);
-  if (context.profile.role !== "admin") {
-    const { data, error } = await context.supabase.from("profiles")
-      .select("id, full_name, role, created_at, recordings_enabled").eq("team_id", context.profile.team_id).order("full_name");
-    if (error) {
-      console.error("Team query failed", error.message);
-      return apiError("Kunne ikke hente teamet.", 500);
-    }
-    return NextResponse.json({ data, campaigns: [], lead_lists: [] });
-  }
+  if (context.profile.role !== "admin") return apiError("Kun administratorer har adgang til teamet.", 403);
   try {
     const admin = createSupabaseAdminClient();
     const [profiles, campaigns, lists, campaignAssignments, listAssignments] = await Promise.all([
-      admin.from("profiles").select("id, full_name, role, created_at, recordings_enabled")
+      admin.from("profiles").select("id, full_name, role, created_at, recordings_enabled, call_recording_enabled")
         .eq("team_id", context.profile.team_id).order("full_name"),
       admin.from("campaigns").select("id, name, created_at").eq("team_id", context.profile.team_id)
         .order("created_at", { ascending: false }),
@@ -60,9 +51,11 @@ export async function PATCH(request: Request) {
   const hasCampaigns = body.campaign_ids !== undefined;
   const hasLists = body.lead_list_ids !== undefined;
   const hasRecordingSetting = body.recordings_enabled !== undefined;
-  if (!hasRole && !hasName && !hasCampaigns && !hasLists && !hasRecordingSetting) return apiError("Der er ingen ændringer at gemme.");
-  if (hasRole && !["admin", "manager", "salesperson"].includes(String(body.role))) return apiError("Vælg en gyldig rolle.");
+  const hasCallRecordingSetting = body.call_recording_enabled !== undefined;
+  if (!hasRole && !hasName && !hasCampaigns && !hasLists && !hasRecordingSetting && !hasCallRecordingSetting) return apiError("Der er ingen ændringer at gemme.");
+  if (hasRole && !["admin", "user"].includes(String(body.role))) return apiError("Vælg administrator eller bruger.");
   if (hasRecordingSetting && typeof body.recordings_enabled !== "boolean") return apiError("Vælg en gyldig indstilling for samtaleoptagelser.");
+  if (hasCallRecordingSetting && typeof body.call_recording_enabled !== "boolean") return apiError("Vælg en gyldig indstilling for opkaldsoptagelse.");
   const fullName = typeof body.full_name === "string" ? body.full_name.trim() : null;
   if (hasName && (!fullName || fullName.length > 120)) return apiError("Navnet skal være 1–120 tegn.");
   let campaignIds = hasCampaigns && Array.isArray(body.campaign_ids)
@@ -93,11 +86,12 @@ export async function PATCH(request: Request) {
       if (error || data.length !== leadListIds.length) return apiError("En leadliste tilhører ikke dit team.", 400);
       if (campaignIds) campaignIds = [...new Set([...campaignIds, ...data.map((list) => list.campaign_id)])];
     }
-    if (hasRole || hasName || hasRecordingSetting) {
+    if (hasRole || hasName || hasRecordingSetting || hasCallRecordingSetting) {
       const { error } = await admin.from("profiles").update({
-        ...(hasRole ? { role: body.role as "admin" | "manager" | "salesperson" } : {}),
+        ...(hasRole ? { role: body.role === "admin" ? "admin" : "salesperson" } : {}),
         ...(hasName ? { full_name: fullName! } : {}),
         ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled as boolean } : {}),
+        ...(hasCallRecordingSetting ? { call_recording_enabled: body.call_recording_enabled as boolean } : {}),
       }).eq("id", member.id).eq("team_id", context.profile.team_id);
       if (error) {
         console.error("Team profile update failed", error.message);
@@ -142,6 +136,7 @@ export async function PATCH(request: Request) {
       ...(hasRole ? { role: body.role } : {}),
       ...(hasName ? { full_name: fullName } : {}),
       ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled } : {}),
+      ...(hasCallRecordingSetting ? { call_recording_enabled: body.call_recording_enabled } : {}),
       ...(campaignIds ? { campaign_ids: campaignIds } : {}),
       ...(leadListIds ? { lead_list_ids: leadListIds } : {}),
     });

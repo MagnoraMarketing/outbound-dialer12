@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
+import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
 
 export async function POST(request: Request) {
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     if (leadError || !data) return apiError("Virksomheden blev ikke fundet.", leadError ? 500 : 404);
     lead = data;
     if (lead.status === "do_not_call" || lead.status === "wrong_number") return apiError("Denne virksomhed er markeret som må ikke ringes op eller har et ugyldigt nummer.", 409);
-    if (lead.assigned_user_id && lead.assigned_user_id !== context.user.id && context.profile.role === "salesperson") {
+    if (lead.assigned_user_id && lead.assigned_user_id !== context.user.id && context.profile.role !== "admin") {
       return apiError("Virksomheden er tildelt en anden sælger.", 403);
     }
     if (lead.next_follow_up_at && new Date(lead.next_follow_up_at) > new Date()) {
@@ -32,12 +32,20 @@ export async function POST(request: Request) {
     if (activeCall) return apiError("En anden bruger håndterer allerede dette opkald.", 409);
   }
 
-  const { data: call, error: insertError } = await context.supabase.from("calls").insert({
+  let admin;
+  try {
+    admin = createSupabaseAdminClient();
+  } catch (error) {
+    console.error("Call creation is not configured", error);
+    return apiError("Opkaldsoprettelse er ikke konfigureret.", 503);
+  }
+  const { data: call, error: insertError } = await admin.from("calls").insert({
     team_id: context.profile.team_id,
     lead_id: lead?.id ?? null,
     user_id: context.user.id,
     phone,
     status: "queued",
+    recording_enabled: context.profile.call_recording_enabled,
   }).select().single();
   if (insertError || !call) {
     console.error("Call record creation failed", insertError?.message);

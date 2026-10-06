@@ -14,7 +14,9 @@ export async function GET() {
   }
   const calls = (data ?? []).map((call) => ({
     ...call,
-    recording_url: result.context.profile.recordings_enabled ? call.recording_url : null,
+    recording_url: result.context.profile.role === "admin" && call.recording_url
+      ? `/api/calls/${call.id}/recording`
+      : null,
   }));
   return NextResponse.json({ data: calls });
 }
