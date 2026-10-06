@@ -12,9 +12,13 @@ export async function POST(request: Request) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName) return apiError("Udfyld et gyldigt navn og en e-mailadresse.");
   try {
     const admin = createSupabaseAdminClient();
+    const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "");
+    const appUrl = configuredAppUrl?.startsWith("https://") ? configuredAppUrl : new URL(request.url).origin;
+    const inviteRedirect = new URL("/auth/callback", appUrl);
+    inviteRedirect.searchParams.set("next", "/");
     const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
       data: { full_name: fullName, team_id: context.profile.team_id, nordcall_app: true },
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ?? ""}/`,
+      redirectTo: inviteRedirect.toString(),
     });
     if (error || !data.user) {
       console.error("Team invitation failed", error?.message);
