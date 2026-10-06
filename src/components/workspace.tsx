@@ -376,7 +376,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.slice(1));
-    if (hashParams.get("type") === "recovery") setAuthMode("recovery");
+    if (params.get("recovery") === "1" || hashParams.get("type") === "recovery") setAuthMode("recovery");
     const authError = params.get("authError") || params.get("error") || hashParams.get("error");
     const errorCode = params.get("error_code") || hashParams.get("error_code");
     if (authError || errorCode) {
@@ -385,6 +385,10 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         ? "Bekræftelseslinket er udløbet eller allerede brugt. Send et nyt link nedenfor."
         : "E-mailbekræftelsen kunne ikke gennemføres. Send et nyt link, eller prøv at logge ind.");
       window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.has("recovery")) {
+      params.delete("recovery");
+      const search = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${search ? `?${search}` : ""}`);
     }
   }, []);
 
@@ -413,10 +417,6 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           ? "Nordcall-databasen er ikke eksponeret i Supabase. Tilføj nordcall under Project Settings → API → Exposed schemas."
           : "Brugerprofilen kunne ikke indlæses. Kontrollér, at Nordcall-migrationen er kørt, og at nordcall er eksponeret i Supabase.");
       } else if (data) {
-        if (data.role === "admin" && data.team_id && !adminEntry) {
-          window.location.replace("/admin");
-          return;
-        }
         setProfile(data as Profile);
       } else {
         setAuthError("Din konto er bekræftet, men Nordcall-profilen mangler. Opret en Nordcall-konto eller kontakt administratoren.");
@@ -708,7 +708,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         const appUrl = configuredAppUrl?.startsWith("https://") ? configuredAppUrl : window.location.origin;
         const returnPath = window.location.pathname === "/admin" ? "/admin" : "/";
         const { error: recoveryError } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${appUrl}${returnPath}`,
+          redirectTo: `${appUrl}/auth/callback?next=${encodeURIComponent(returnPath)}&recovery=1`,
         });
         if (recoveryError) throw recoveryError;
         setAuthMessage("Hvis adressen findes, har vi sendt et link til nulstilling. Tjek også spam-mappen.");
