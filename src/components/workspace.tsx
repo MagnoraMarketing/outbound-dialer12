@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson" };
+type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean };
 type Lead = {
   id: string; company_name: string; cvr: string | null; contact_person: string | null; phone: string;
   email?: string | null; website?: string | null; address?: string | null; city: string | null;
@@ -28,30 +28,49 @@ type DashboardData = {
 type BudgetEntry = {
   id: string; user_id: string; user_name: string; role: Profile["role"]; campaign_id: string | null;
   campaign_name: string | null; weekly_target: number; monthly_target: number;
-  weekly_meetings: number; monthly_meetings: number; updated_at: string;
+  activity_mode: "meeting" | "sale" | "both";
+  commission_per_meeting: number; commission_per_sale: number;
+  weekly_meeting_target: number; weekly_sale_target: number;
+  weekly_meetings: number; monthly_meetings: number; weekly_sales: number; monthly_sales: number;
+  monthly_commission: number; expected_monthly_commission: number; updated_at: string;
+};
+type BudgetActivity = { id: string; user_id: string; campaign_id: string; event_type: "meeting" | "sale"; created_at: string };
+type CampaignBudgetSettings = {
+  activity_mode: "meeting" | "sale" | "both";
+  commission_per_meeting: number;
+  commission_per_sale: number;
+  weekly_meeting_target: number;
+  weekly_sale_target: number;
 };
 type BudgetReport = {
   data: BudgetEntry[];
   members: { id: string; full_name: string; role: Profile["role"] }[];
   campaigns: { id: string; name: string }[];
+  activities: BudgetActivity[];
 };
 type TeamMessage = {
   id: string; broadcast_id: string; recipient_user_id: string; sent_by: string;
   campaign_id: string | null; lead_list_id: string | null;
   title: string; body: string; created_at: string; read_at: string | null; recipient_count?: number;
 };
-type Call = { id: string; lead_id: string | null; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; leads?: { company_name: string; contact_person: string | null } | null };
+type Call = { id: string; lead_id: string | null; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; recording_url?: string | null; leads?: { company_name: string; contact_person: string | null } | null };
+type TelnyxClient = InstanceType<typeof import("@telnyx/webrtc").TelnyxRTC>;
+type TelnyxCall = import("@telnyx/webrtc").Call;
+type LeadHistoryEntry = {
+  id: string; kind: "call" | "note" | "meeting"; user_id: string | null; created_at: string; title: string;
+  body: string | null; duration_seconds: number | null; recording_url: string | null;
+};
 type Callback = { id: string; lead_id: string; callback_at: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type Meeting = { id: string; meeting_at: string; meeting_type: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
 type TeamMember = {
-  id: string; full_name: string; role: Profile["role"]; created_at: string;
+  id: string; full_name: string; role: Profile["role"]; created_at: string; recordings_enabled: boolean;
   campaign_ids?: string[]; lead_list_ids?: string[];
 };
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
 type Campaign = { id: string; name: string; created_at: string };
 type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
 type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
-type Page = "dashboard" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "messages" | "settings";
+type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -64,6 +83,7 @@ const statusChoices = ["new", "to_call", "called", "no_answer", "callback", "int
 const navGroups: { label: string; items: { id: Page; title: string; icon: typeof LayoutDashboard }[] }[] = [
   { label: "ARBEJDSPLADS", items: [
     { id: "dashboard", title: "Overblik", icon: LayoutDashboard },
+    { id: "budget", title: "Budget", icon: Target },
     { id: "leads", title: "Virksomheder", icon: Building2 },
     { id: "dialer", title: "Opkald", icon: PhoneCall },
     { id: "dialpad", title: "Dialpad", icon: Phone },
@@ -160,6 +180,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [leadLists, setLeadLists] = useState<LeadList[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState("");
   const [selectedLeadListId, setSelectedLeadListId] = useState("");
+  const [leadListsLoading, setLeadListsLoading] = useState(false);
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newLeadListName, setNewLeadListName] = useState("");
   const [campaignBusy, setCampaignBusy] = useState(false);
@@ -173,6 +194,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [callStartBusy, setCallStartBusy] = useState(false);
+  const [voiceState, setVoiceState] = useState<"disconnected" | "connecting" | "ready">("disconnected");
   const [callStarted, setCallStarted] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [callNote, setCallNote] = useState("");
@@ -197,6 +219,14 @@ export function Workspace({ configured }: { configured: boolean }) {
   const [leadFormNewListName, setLeadFormNewListName] = useState("");
   const [leadFormListBusy, setLeadFormListBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const voiceClientRef = useRef<TelnyxClient | null>(null);
+  const voiceConnectionPromiseRef = useRef<Promise<TelnyxClient> | null>(null);
+  const telnyxCallRef = useRef<TelnyxCall | null>(null);
+  const callRecordIdRef = useRef<string | null>(null);
+  const callerNumberRef = useRef<string | null>(null);
+  const callStatusUpdateRef = useRef<Promise<void>>(Promise.resolve());
+  const localAudioStreamRef = useRef<MediaStream | null>(null);
 
   const loadPageData = useCallback(async (activePage: Page, q = "") => {
     setError("");
@@ -211,6 +241,8 @@ export function Workspace({ configured }: { configured: boolean }) {
         setDashboard(result.data);
         setBudgetReport(budgets);
         setTeamMessages(messages.data);
+      } else if (activePage === "budget") {
+        setBudgetReport(await api<BudgetReport>("/api/budgets"));
       } else if (activePage === "leads") {
         const params = new URLSearchParams();
         if (q) params.set("q", q);
@@ -254,6 +286,10 @@ export function Workspace({ configured }: { configured: boolean }) {
         setTeamMessages(data);
       }
     } catch (fetchError) {
+      if (activePage === "dialer") {
+        setQueue([]);
+        setActiveLead(null);
+      }
       setError(fetchError instanceof Error ? fetchError.message : "Data kunne ikke indlæses.");
     } finally {
       setLoading(false);
@@ -285,15 +321,21 @@ export function Workspace({ configured }: { configured: boolean }) {
     if (!user || !profile?.team_id || !selectedCampaignId) {
       setLeadLists([]);
       setSelectedLeadListId("");
+      setLeadListsLoading(false);
       return;
     }
     let alive = true;
+    setLeadListsLoading(true);
     void api<{ data: LeadList[] }>(`/api/campaigns/${selectedCampaignId}/lists`).then(({ data }) => {
       if (!alive) return;
       setLeadLists(data);
       setSelectedLeadListId((current) => data.some((list) => list.id === current) ? current : "");
+      setLeadListsLoading(false);
     }).catch((loadError) => {
-      if (alive) setError(loadError instanceof Error ? loadError.message : "Leadlister kunne ikke indlæses.");
+      if (alive) {
+        setLeadListsLoading(false);
+        setError(loadError instanceof Error ? loadError.message : "Leadlister kunne ikke indlæses.");
+      }
     });
     return () => { alive = false; };
   }, [user, profile?.team_id, selectedCampaignId]);
@@ -346,7 +388,7 @@ export function Workspace({ configured }: { configured: boolean }) {
         return;
       }
       const { data, error: profileError } = await client.from("profiles")
-        .select("id, team_id, full_name, role").eq("id", currentUser.id).maybeSingle();
+        .select("id, team_id, full_name, role, recordings_enabled").eq("id", currentUser.id).maybeSingle();
       if (!alive) return;
       if (profileError) {
         console.error("Nordcall profile lookup failed", profileError.code, profileError.message);
@@ -388,6 +430,159 @@ export function Workspace({ configured }: { configured: boolean }) {
     }, 4000);
     return () => window.clearInterval(timer);
   }, [activeCall, callStarted]);
+
+  useEffect(() => () => {
+    localAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    const client = voiceClientRef.current;
+    if (client) void client.disconnect().catch((disconnectError: unknown) => {
+      console.error("Telnyx WebRTC client could not disconnect", disconnectError);
+    });
+  }, []);
+
+  async function ensureTelnyxClient() {
+    if (voiceClientRef.current?.connected) return voiceClientRef.current;
+    if (voiceConnectionPromiseRef.current) return voiceConnectionPromiseRef.current;
+
+    const connectionPromise = (async () => {
+      setVoiceState("connecting");
+      if (voiceClientRef.current) {
+        try {
+          await voiceClientRef.current.disconnect();
+        } catch (disconnectError) {
+          console.error("Stale Telnyx WebRTC client could not disconnect", disconnectError);
+        }
+        voiceClientRef.current = null;
+      }
+      const { data: credentials } = await api<{ data: { token: string; callerNumber: string } }>("/api/calls/webrtc-token", { method: "POST" });
+      callerNumberRef.current = credentials.callerNumber;
+      const { TelnyxRTC } = await import("@telnyx/webrtc");
+      const client = new TelnyxRTC({ login_token: credentials.token, hangupOnBeforeUnload: true });
+      let ready = false;
+      let resolveReady!: () => void;
+      let rejectReady!: (reason: Error) => void;
+      const readyPromise = new Promise<void>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      const connectionTimeout = window.setTimeout(() => {
+        rejectReady(new Error("Telnyx kunne ikke forbinde. Kontrollér netværket, og prøv igen."));
+      }, 20_000);
+
+      client.on("telnyx.ready", () => {
+        ready = true;
+        setVoiceState("ready");
+        resolveReady();
+      });
+      client.on("telnyx.error", (event) => {
+        const message = event.error.message || event.error.description || "Telnyx-forbindelsen fejlede.";
+        if (!ready) rejectReady(new Error(message));
+        else setError(message);
+      });
+      client.on("telnyx.notification", (notification) => {
+        const sdkCall = notification.call;
+        if (notification.type !== "callUpdate" || !sdkCall || sdkCall.id !== telnyxCallRef.current?.id) return;
+        const state = String(sdkCall.state).toLocaleLowerCase();
+        const status = ["requesting", "trying", "1", "2"].includes(state) ? "initiated"
+          : ["ringing", "4"].includes(state) ? "ringing"
+            : ["active", "7"].includes(state) ? "answered"
+              : ["hangup", "destroy", "purge", "9", "10", "11"].includes(state) ? "completed" : null;
+        const callId = callRecordIdRef.current;
+        if (!status || !callId) return;
+        setActiveCall((current) => current?.id === callId ? { ...current, status } : current);
+        if (["completed", "failed", "busy", "no_answer", "cancelled"].includes(status)) {
+          setCallStarted(null);
+          localAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+          localAudioStreamRef.current = null;
+        }
+        callStatusUpdateRef.current = callStatusUpdateRef.current.then(async () => {
+          await api(`/api/calls/${callId}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+        }).catch((statusError: unknown) => {
+          console.error("Could not persist Telnyx call status", statusError);
+          setError(statusError instanceof Error ? statusError.message : "Opkaldsstatus kunne ikke gemmes.");
+        });
+      });
+
+      voiceClientRef.current = client;
+      void client.connect().catch((connectionError: unknown) => {
+        rejectReady(connectionError instanceof Error ? connectionError : new Error("Telnyx kunne ikke forbinde."));
+      });
+      try {
+        await readyPromise;
+        return client;
+      } catch (connectionError) {
+        voiceClientRef.current = null;
+        setVoiceState("disconnected");
+        try {
+          await client.disconnect();
+        } catch (disconnectError) {
+          console.error("Telnyx WebRTC client cleanup failed", disconnectError);
+        }
+        throw connectionError;
+      } finally {
+        window.clearTimeout(connectionTimeout);
+      }
+    })();
+    voiceConnectionPromiseRef.current = connectionPromise;
+    try {
+      return await connectionPromise;
+    } catch (connectionError) {
+      setVoiceState("disconnected");
+      throw connectionError;
+    } finally {
+      voiceConnectionPromiseRef.current = null;
+    }
+  }
+
+  async function startWebRtcCall(phone: string, leadId?: string) {
+    callRecordIdRef.current = null;
+    telnyxCallRef.current = null;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Denne browser kan ikke bruge mikrofonen. Åbn Nordcall via HTTPS i en understøttet browser.");
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    localAudioStreamRef.current = stream;
+    try {
+      const client = await ensureTelnyxClient();
+      const result = await api<{ data: Call }>("/api/calls/start", {
+        method: "POST",
+        body: JSON.stringify(leadId ? { lead_id: leadId } : { phone }),
+      });
+      callRecordIdRef.current = result.data.id;
+      setActiveCall(result.data);
+      setCallStarted(Date.now());
+      setElapsed(0);
+      if (!client.connected) throw new Error("Telnyx-forbindelsen blev afbrudt. Prøv at ringe igen.");
+      if (!callerNumberRef.current) throw new Error("Telnyx har ikke returneret et udgående nummer.");
+      telnyxCallRef.current = client.newCall({
+        destinationNumber: result.data.phone,
+        callerNumber: callerNumberRef.current,
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        localStream: stream,
+        ...(remoteAudioRef.current ? { remoteElement: remoteAudioRef.current } : {}),
+      });
+      return result.data;
+    } catch (startError) {
+      stream.getTracks().forEach((track) => track.stop());
+      localAudioStreamRef.current = null;
+      if (callRecordIdRef.current) {
+        try {
+          await api("/api/calls/end", {
+            method: "POST",
+            body: JSON.stringify({ call_id: callRecordIdRef.current, outcome: "failed" }),
+          });
+        } catch (recordError) {
+          console.error("Failed WebRTC call could not be marked as ended", recordError);
+        }
+      }
+      callRecordIdRef.current = null;
+      telnyxCallRef.current = null;
+      setActiveCall(null);
+      setCallStarted(null);
+      throw startError;
+    }
+  }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -461,6 +656,14 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   async function logout() {
     if (!supabase) return;
+    try {
+      if (telnyxCallRef.current) await telnyxCallRef.current.hangup();
+      if (voiceClientRef.current) await voiceClientRef.current.disconnect();
+    } catch (disconnectError) {
+      console.error("Telnyx call cleanup during logout failed", disconnectError);
+      setError("Telnyx-opkaldet kunne ikke afsluttes sikkert. Prøv igen om et øjeblik.");
+      return;
+    }
     const { error: logoutError } = await supabase.auth.signOut();
     if (logoutError) setError("Du blev ikke logget ud. Prøv igen.");
     else {
@@ -479,7 +682,8 @@ export function Workspace({ configured }: { configured: boolean }) {
     try {
       const { error: teamError } = await supabase.rpc("create_team_for_current_user", { team_name: teamName });
       if (teamError) throw teamError;
-      const { data, error: profileError } = await supabase.from("profiles").select("id, team_id, full_name, role").eq("id", user.id).single();
+      const { data, error: profileError } = await supabase.from("profiles")
+        .select("id, team_id, full_name, role, recordings_enabled").eq("id", user.id).single();
       if (profileError) throw new Error("Dit team blev oprettet, men profilen kunne ikke indlæses. Genindlæs siden.");
       setProfile(data as Profile);
     } catch (teamError) {
@@ -615,6 +819,32 @@ export function Workspace({ configured }: { configured: boolean }) {
     }
   }
 
+  async function saveCampaignBudget(userId: string, campaignId: string, settings: CampaignBudgetSettings) {
+    try {
+      await api("/api/budgets", {
+        method: "PUT",
+        body: JSON.stringify({ user_id: userId, campaign_id: campaignId, ...settings }),
+      });
+      setNotice("Budget og provisionsaftale er gemt.");
+      setBudgetReport(await api<BudgetReport>("/api/budgets"));
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Budget og provision kunne ikke gemmes.");
+    }
+  }
+
+  async function recordBudgetEvent(campaignId: string, eventType: "meeting" | "sale") {
+    try {
+      await api("/api/budgets", {
+        method: "POST",
+        body: JSON.stringify({ campaign_id: campaignId, event_type: eventType }),
+      });
+      setNotice(eventType === "meeting" ? "Mødet er registreret i dit budget." : "Salget er registreret i dit budget.");
+      setBudgetReport(await api<BudgetReport>("/api/budgets"));
+    } catch (eventError) {
+      setError(eventError instanceof Error ? eventError.message : "Aktiviteten kunne ikke registreres.");
+    }
+  }
+
   async function sendTeamMessage(input: { title: string; body: string; scope: string; campaign_id?: string; lead_list_id?: string }) {
     try {
       const result = await api<{ sent: number }>("/api/messages", {
@@ -666,13 +896,9 @@ export function Workspace({ configured }: { configured: boolean }) {
     setCallStartBusy(true);
     setError("");
     try {
-      const result = await api<{ data: Call }>("/api/calls/start", { method: "POST", body: JSON.stringify({ lead_id: activeLead.id }) });
-      const now = Date.now();
-      setActiveCall(result.data);
-      setCallStarted(now);
-      setElapsed(0);
+      await startWebRtcCall(activeLead.phone, activeLead.id);
       setQueue((current) => current.filter((lead) => lead.id !== activeLead.id));
-      setNotice("Opkaldet er startet.");
+      setNotice("Headsettet er forbundet. Opkaldet starter.");
     } catch (callError) {
       setError(callError instanceof Error ? callError.message : "Opkaldet kunne ikke startes.");
     } finally {
@@ -689,15 +915,9 @@ export function Workspace({ configured }: { configured: boolean }) {
     setCallStartBusy(true);
     setError("");
     try {
-      const result = await api<{ data: Call }>("/api/calls/start", {
-        method: "POST",
-        body: JSON.stringify({ phone }),
-      });
-      setActiveCall(result.data);
+      await startWebRtcCall(phone);
       setActiveLead(null);
-      setCallStarted(Date.now());
-      setElapsed(0);
-      setNotice("Opkaldet er startet.");
+      setNotice("Headsettet er forbundet. Opkaldet starter.");
     } catch (callError) {
       setError(callError instanceof Error ? callError.message : "Opkaldet kunne ikke startes.");
     } finally {
@@ -739,6 +959,10 @@ export function Workspace({ configured }: { configured: boolean }) {
     setOutcomeBusy(true);
     setError("");
     try {
+      if (activeCall.status !== "completed" && activeCall.status !== "busy" && activeCall.status !== "failed"
+        && activeCall.status !== "no_answer" && activeCall.status !== "cancelled" && telnyxCallRef.current) {
+        await telnyxCallRef.current.hangup();
+      }
       await api("/api/calls/end", {
         method: "POST",
         body: JSON.stringify({
@@ -753,6 +977,10 @@ export function Workspace({ configured }: { configured: boolean }) {
       setCallStarted(null);
       setCallNote("");
       setCallbackAt("");
+      callRecordIdRef.current = null;
+      telnyxCallRef.current = null;
+      localAudioStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localAudioStreamRef.current = null;
       if (!activeCall.lead_id) {
         setActiveLead(queue[0] ?? null);
         return;
@@ -1028,7 +1256,7 @@ export function Workspace({ configured }: { configured: boolean }) {
   }
 
   const pageTitle: Record<Page, string> = {
-    dashboard: "Overblik", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
+    dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
     meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team",
     messages: "Beskeder", settings: "Indstillinger",
   };
@@ -1038,6 +1266,7 @@ export function Workspace({ configured }: { configured: boolean }) {
 
   return (
     <div className="app-shell">
+      <audio ref={remoteAudioRef} autoPlay playsInline aria-hidden="true" style={{ display: "none" }} />
       {mobileNav && <button className="mobile-scrim" aria-label="Luk menu" onClick={() => setMobileNav(false)} />}
       <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
         <div className="sidebar-brand"><Brand compact /></div>
@@ -1091,9 +1320,14 @@ export function Workspace({ configured }: { configured: boolean }) {
             data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
             budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
           />}
+          {page === "budget" && <BudgetView
+            report={budgetReport} loading={loading} userId={user.id} role={profile.role}
+            onSave={saveCampaignBudget} onRecord={recordBudgetEvent}
+          />}
           {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
-            lead={activeLead} queueCount={queue.length} call={activeCall} elapsed={elapsed} callStarted={callStarted}
+            lead={activeLead} queueCount={queue.length} loading={loading} leadListsLoading={leadListsLoading}
+            call={activeCall} elapsed={elapsed} callStarted={callStarted} voiceState={voiceState}
             campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
             onCampaign={(id) => { setSelectedCampaignId(id); setSelectedLeadListId(""); setQueue([]); setActiveLead(null); }}
             onLeadList={(id) => { setSelectedLeadListId(id); setQueue([]); setActiveLead(null); }}
@@ -1101,6 +1335,7 @@ export function Workspace({ configured }: { configured: boolean }) {
             onCreateLead={createDialerLead}
             note={callNote} setNote={setCallNote} callbackAt={callbackAt} setCallbackAt={setCallbackAt}
             busy={outcomeBusy} onCall={beginCall} onOutcome={finishCall} onNext={advanceLead}
+            onHistoryError={setError}
             onRefresh={() => { setActiveLead(null); void loadPageData("dialer"); }}
             onBookMeeting={() => {
               if (activeLead) setMeetingLeadId(activeLead.id);
@@ -1276,6 +1511,118 @@ function DashboardView({ data, loading, name, role, userId, budgets, setPage, on
   </div>;
 }
 
+function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
+  report: BudgetReport | null; loading: boolean; userId: string; role: Profile["role"];
+  onSave: (userId: string, campaignId: string, settings: CampaignBudgetSettings) => void;
+  onRecord: (campaignId: string, eventType: "meeting" | "sale") => void;
+}) {
+  const [selectedUserId, setSelectedUserId] = useState(userId);
+  const [campaignId, setCampaignId] = useState("");
+  const [activityMode, setActivityMode] = useState<CampaignBudgetSettings["activity_mode"]>("meeting");
+  const [weeklyMeetings, setWeeklyMeetings] = useState("0");
+  const [weeklySales, setWeeklySales] = useState("0");
+  const [meetingCommission, setMeetingCommission] = useState("0");
+  const [saleCommission, setSaleCommission] = useState("0");
+  const campaigns = useMemo(() => report?.campaigns ?? [], [report?.campaigns]);
+  const members = report?.members ?? [];
+  const target = report?.data.find((item) => item.user_id === selectedUserId && item.campaign_id === campaignId);
+
+  useEffect(() => {
+    if (role !== "admin") setSelectedUserId(userId);
+  }, [role, userId]);
+  useEffect(() => {
+    if (!campaigns.some((campaign) => campaign.id === campaignId)) setCampaignId(campaigns[0]?.id ?? "");
+  }, [campaignId, campaigns]);
+  useEffect(() => {
+    setActivityMode(target?.activity_mode ?? "meeting");
+    setWeeklyMeetings(String(target?.weekly_meeting_target ?? target?.weekly_target ?? 0));
+    setWeeklySales(String(target?.weekly_sale_target ?? 0));
+    setMeetingCommission(String(target?.commission_per_meeting ?? 0));
+    setSaleCommission(String(target?.commission_per_sale ?? 0));
+  }, [target]);
+
+  const displayEvents = activityMode === "both" ? ["meeting", "sale"] as const : [activityMode] as const;
+  const expectedMonthly = (Number(weeklyMeetings) * Number(meetingCommission)
+    + Number(weeklySales) * Number(saleCommission)) * (52 / 12);
+  const visibleActivities = (report?.activities ?? []).filter((activity) =>
+    activity.campaign_id === campaignId && (role === "admin" ? activity.user_id === selectedUserId : activity.user_id === userId),
+  );
+  const userName = members.find((member) => member.id === selectedUserId)?.full_name || "Sælger";
+
+  return <div className="view budget-view">
+    <div className="page-heading"><div><span className="eyebrow">DIT FOKUS · DINE RESULTATER</span><h1>Budget</h1><p>Sæt et enkelt ugemål, følg aktiviteterne live, og se hvad det giver i provision.</p></div><Target size={21} className="heading-muted" /></div>
+    {!campaigns.length && !loading ? <div className="panel empty-panel"><EmptyInline title="Ingen kampagner endnu" description="Når du er tildelt en kampagne, kan du sætte dit mål og din provisionssats her." /></div> : <>
+      <section className="panel budget-setup">
+        <div className="budget-setup-heading"><span className="panel-eyebrow">ENKEL OPSÆTNING</span><h2>Vælg kampagne og aftal dit mål</h2><p>Målet er pr. uge. Månedsprognosen beregnes automatisk ud fra 52/12 uger.</p></div>
+        <form className="campaign-budget-form" onSubmit={(event) => {
+          event.preventDefault();
+          if (!campaignId) return;
+          onSave(selectedUserId, campaignId, {
+            activity_mode: activityMode,
+            weekly_meeting_target: activityMode === "sale" ? 0 : Number(weeklyMeetings),
+            weekly_sale_target: activityMode === "meeting" ? 0 : Number(weeklySales),
+            commission_per_meeting: activityMode === "sale" ? 0 : Number(meetingCommission),
+            commission_per_sale: activityMode === "meeting" ? 0 : Number(saleCommission),
+          });
+        }}>
+          {role === "admin" && <label>Sælger<select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
+            {members.map((member) => <option key={member.id} value={member.id}>{member.full_name || "Uden navn"} · {friendlyRole(member.role)}</option>)}
+          </select></label>}
+          <label>Kampagne<select required value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+            <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+          </select></label>
+          <label>Følg aktivitet<select value={activityMode} onChange={(event) => setActivityMode(event.target.value as CampaignBudgetSettings["activity_mode"])}>
+            <option value="meeting">Møder</option><option value="sale">Salg</option><option value="both">Møder og salg</option>
+          </select></label>
+          {activityMode !== "sale" && <label>Provision pr. møde (kr.)<input required type="number" min="0" max="1000000" step="0.01" value={meetingCommission} onChange={(event) => setMeetingCommission(event.target.value)} /></label>}
+          {activityMode !== "meeting" && <label>Provision pr. salg (kr.)<input required type="number" min="0" max="1000000" step="0.01" value={saleCommission} onChange={(event) => setSaleCommission(event.target.value)} /></label>}
+          {activityMode !== "sale" && <label>Møder pr. uge<input required type="number" min="0" max="10000" step="1" value={weeklyMeetings} onChange={(event) => setWeeklyMeetings(event.target.value)} /></label>}
+          {activityMode !== "meeting" && <label>Salg pr. uge<input required type="number" min="0" max="10000" step="1" value={weeklySales} onChange={(event) => setWeeklySales(event.target.value)} /></label>}
+          <div className="budget-form-footer"><span>Forventet provision ved målopfyldelse: <strong>{formatMoney(expectedMonthly)} / måned</strong></span>
+            <button className="button button-primary button-small" disabled={!campaignId}><Check size={14} /> Gem mit budget</button>
+          </div>
+        </form>
+      </section>
+      {target ? <section className="budget-results">
+        <div className="budget-results-heading"><div><span className="panel-eyebrow">{userName} · {target.campaign_name || "Kampagne"}</span><h2>Din fremgang</h2></div><span className="live-tag"><i /> Opdateret live</span></div>
+        <div className="budget-kpi-grid">
+          <article className="panel budget-commission-card"><span>Provision denne måned</span><strong>{formatMoney(target.monthly_commission)}</strong><small>{target.monthly_meetings + target.monthly_sales} registrerede aktiviteter</small></article>
+          <article className="panel budget-commission-card budget-commission-forecast"><span>Hvis du holder dit ugemål</span><strong>{formatMoney(target.expected_monthly_commission)}</strong><small>Forventet provision pr. måned</small></article>
+          {displayEvents.map((eventType) => {
+            const meeting = eventType === "meeting";
+            const current = meeting ? target.weekly_meetings : target.weekly_sales;
+            const goal = meeting ? target.weekly_meeting_target : target.weekly_sale_target;
+            const monthly = meeting ? target.monthly_meetings : target.monthly_sales;
+            const monthlyGoal = Math.round(goal * 52 / 12);
+            const percent = goal ? Math.min(100, Math.round(current / goal * 100)) : 0;
+            return <article className="panel budget-activity-card" key={eventType}>
+              <div className="budget-activity-title"><span>{meeting ? <CalendarDays size={16} /> : <CheckCircle2 size={16} />}</span><div><strong>{meeting ? "Møder" : "Salg"}</strong><small>{current} / {goal} denne uge</small></div></div>
+              <div className="budget-progress-track"><i style={{ width: `${percent}%` }} /></div>
+              <div className="budget-activity-foot"><span>{percent}% af ugemålet</span><span>{monthly} / {monthlyGoal} denne måned</span></div>
+              <button className="button button-secondary button-small" onClick={() => onRecord(campaignId, eventType)}>+ Registrer {meeting ? "møde" : "salg"}</button>
+            </article>;
+          })}
+        </div>
+        <section className="panel budget-activity-list">
+          <div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Det, der tæller med</h2></div></div>
+          {visibleActivities.length ? visibleActivities.slice(0, 8).map((activity) => <div className="budget-activity-row" key={activity.id}>
+            <span className={`activity-dot activity-${activity.event_type}`} />
+            <strong>{activity.event_type === "meeting" ? "Møde" : "Salg"}</strong>
+            <time>{formatDate(activity.created_at, { day: "numeric", month: "short", year: "numeric" })} · {formatTime(activity.created_at)}</time>
+          </div>) : <p className="budget-no-activity">Dine møder og salg bliver vist her, når de registreres.</p>}
+          <small className="budget-duplicate-note">Møder booket under Møder registreres også automatisk. Registrér ikke det samme møde to gange.</small>
+        </section>
+      </section> : <div className="panel budget-unconfigured"><Target size={18} /><p>Vælg aktivitetstype, ugemål og provisionssats, og gem opsætningen for at begynde.</p></div>}
+    </>}
+  </div>;
+}
+
+function formatMoney(amount: number) {
+  return new Intl.NumberFormat("da-DK", {
+    style: "currency", currency: "DKK", maximumFractionDigits: 0,
+  }).format(amount);
+}
+
 function PersonalBudgetCard({ report, userId, onSave }: {
   report: BudgetReport; userId: string; onSave: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
@@ -1370,21 +1717,37 @@ function LeadsView({ leads, total, page, onPage, loading, status, setStatus, fil
   </div>;
 }
 
-function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
+function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed, callStarted, voiceState, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
   onCampaign, onLeadList, manualPhone, setManualPhone, onManualCall, callStartBusy, onCreateLead,
-  note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting }: {
-  lead: Lead | null; queueCount: number; call: Call | null; elapsed: number; callStarted: number | null; note: string; setNote: (value: string) => void;
+  note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting, onHistoryError }: {
+  lead: Lead | null; queueCount: number; loading: boolean; leadListsLoading: boolean; call: Call | null; elapsed: number; callStarted: number | null; voiceState: "disconnected" | "connecting" | "ready"; note: string; setNote: (value: string) => void;
   campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
   onCampaign: (id: string) => void; onLeadList: (id: string) => void;
   manualPhone: string; setManualPhone: (phone: string) => void; onManualCall: () => void; callStartBusy: boolean;
   onCreateLead: (input: { company_name: string; phone: string; contact_person: string; notes: string }) => Promise<boolean>;
   callbackAt: string; setCallbackAt: (value: string) => void; busy: boolean; onCall: () => void; onOutcome: (outcome: string) => void;
-  onNext: () => void; onRefresh: () => void; onBookMeeting: () => void;
+  onNext: () => void; onRefresh: () => void; onBookMeeting: () => void; onHistoryError: (message: string) => void;
 }) {
-  const [history, setHistory] = useState<Call[]>([]);
+  const [history, setHistory] = useState<LeadHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [newLead, setNewLead] = useState({ company_name: "", phone: "", contact_person: "", notes: "" });
   const [newLeadBusy, setNewLeadBusy] = useState(false);
-  useEffect(() => { void api<{ data: Call[] }>("/api/calls").then(({ data }) => setHistory(data.slice(0, 5))).catch(() => undefined); }, [lead?.id, call?.id]);
+  useEffect(() => {
+    if (!lead?.id) {
+      setHistory([]);
+      return;
+    }
+    let alive = true;
+    setHistoryLoading(true);
+    void api<{ data: LeadHistoryEntry[] }>(`/api/leads/${lead.id}/history`).then(({ data }) => {
+      if (alive) setHistory(data);
+    }).catch((loadError) => {
+      if (alive) onHistoryError(loadError instanceof Error ? loadError.message : "Leadets historik kunne ikke indlæses.");
+    }).finally(() => {
+      if (alive) setHistoryLoading(false);
+    });
+    return () => { alive = false; };
+  }, [lead?.id, call?.id, onHistoryError]);
   const awaitingOutcome = Boolean(call && ["completed", "busy", "failed", "no_answer", "cancelled"].includes(call.status) && !call.outcome);
   const active = Boolean(call && (["queued", "initiated", "ringing", "answered"].includes(call.status) || awaitingOutcome));
   async function submitNewLead(event: FormEvent<HTMLFormElement>) {
@@ -1396,6 +1759,17 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
       setNewLeadBusy(false);
     }
   }
+  const leadFields: [string, string][] = lead ? ([
+    ["Kontaktperson", lead.contact_person || ""],
+    ["CVR-nummer", lead.cvr || ""],
+    ["Telefonnummer", lead.phone],
+    ["E-mail", lead.email || ""],
+    ["Hjemmeside", lead.website || ""],
+    ["Adresse", lead.address || ""],
+    ["By", lead.city || ""],
+    ["Branche", lead.industry || ""],
+    ["Medarbejdere", lead.employee_count === null || lead.employee_count === undefined ? "" : lead.employee_count.toLocaleString("da-DK")],
+  ] satisfies [string, string][]).filter(([, value]) => Boolean(value)) : [];
   return <div className="view dialer-view">
     <div className="dialer-title"><div><span className="eyebrow">DIN NÆSTE GODE SAMTALE</span><h1>Opkald</h1><p>Fokus på relationen. Nordcall klarer resten.</p></div>
       <div className="queue-chip"><span className="queue-pulse" /> {queueCount} leads i kø <button aria-label="Hent opkaldskø" onClick={onRefresh}><ArrowDown size={14} /></button></div>
@@ -1404,10 +1778,10 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
       <label>Kampagne<select value={selectedCampaignId} onChange={(event) => onCampaign(event.target.value)}>
         <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
       </select></label>
-      <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
-        <option value="">Alle leads i kampagnen</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+      <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId || leadListsLoading}>
+        <option value="">{leadListsLoading ? "Indlæser leadlister …" : "Alle leads i kampagnen"}</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
       </select></label>
-      <span>Her vises kun kampagner og leadlister, som administratoren har tildelt dig.</span>
+      <span>{leadListsLoading ? "Henter dine tildelte leadlister …" : "Vælg en kampagne og eventuelt en bestemt leadliste."}</span>
     </div>
     <div className="panel dialer-manual-call">
       <div><span className="panel-eyebrow">MANUELT OPKALD</span><strong>Ring til et nummer uden for leadlisten</strong></div>
@@ -1422,10 +1796,12 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
           <div className="lead-card-top"><span className="section-tag"><i /> NÆSTE I KØEN</span><span className="lead-position">Din opkaldsliste <strong>{queueCount > 0 ? `01 / ${String(queueCount).padStart(2, "0")}` : "—"}</strong></span></div>
           <div className="dialer-company-head"><div className="dialer-company-logo">{initials(lead.company_name)}</div><div><h2>{lead.company_name}</h2><span>{lead.industry || "Dansk virksomhed"}{lead.city ? ` · ${lead.city}` : ""}</span></div><button className="more-button"><MoreHorizontal size={18} /></button></div>
           <div className="lead-detail-grid">
-            <div><span>KONTAKTPERSON</span><strong>{lead.contact_person || "Ikke angivet"}</strong></div>
-            <div><span>CVR-NUMMER</span><strong>{lead.cvr || "Ikke angivet"}</strong></div>
-            <div><span>TELEFONNUMMER</span><strong className="phone-detail"><Phone size={14} /> {lead.phone}</strong></div>
-            <div><span>BY</span><strong>{lead.city || "Ikke angivet"}</strong></div>
+            {leadFields.map(([label, value]) => <div key={label}><span>{label.toLocaleUpperCase("da-DK")}</span><strong>
+              {label === "E-mail" ? <a href={`mailto:${value}`}>{value}</a>
+                : label === "Telefonnummer" ? <a className="phone-detail" href={`tel:${value}`}><Phone size={14} /> {value}</a>
+                  : label === "Hjemmeside" && /^https?:\/\//i.test(value) ? <a href={value} target="_blank" rel="noreferrer">{value}</a>
+                    : value}
+            </strong></div>)}
           </div>
           <div className="call-controls">
             {active ? <>
@@ -1441,7 +1817,7 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
                 <div className="callback-inline"><label>Planlæg callback<input aria-label="Callback dato og tid" type="datetime-local" value={callbackAt} onChange={(event) => setCallbackAt(event.target.value)} /></label><button disabled={busy || !callbackAt} onClick={() => onOutcome("callback")}>Gem callback</button></div>
               </div>
             </> : <div className="call-action-row">
-              <button className="call-button" onClick={onCall}><span><PhoneCall size={20} /></span><strong>Ring op</strong><small>Sikker forbindelse via Telnyx</small></button>
+              <button className="call-button" disabled={callStartBusy || active} onClick={onCall}><span><PhoneCall size={20} /></span><strong>{callStartBusy ? "Forbinder headset …" : "Ring op"}</strong><small>{voiceState === "ready" ? "Headset forbundet via Telnyx" : "Sikker headsetforbindelse via Telnyx"}</small></button>
               <button className="next-button" onClick={onNext}>Spring over <ArrowRight size={15} /></button>
             </div>}
           </div>
@@ -1473,10 +1849,15 @@ function DialerView({ lead, queueCount, call, elapsed, callStarted, campaigns, l
       <aside className="dialer-side">
         <div className="panel context-panel"><div className="panel-heading"><div><span className="panel-eyebrow">VIRKSOMHEDSINFO</span><h2>Overblik</h2></div><Building2 size={17} className="heading-muted" /></div>
           {lead ? <><div className="context-row"><span>Leadstatus</span><span className={`status-pill status-${lead.status}`}>{statuses[lead.status] || lead.status}</span></div><div className="context-row"><span>Oprettet</span><strong>{formatDate(lead.created_at)}</strong></div><div className="context-row"><span>Næste opfølgning</span><strong>{lead.next_follow_up_at ? `${formatDate(lead.next_follow_up_at)} · ${formatTime(lead.next_follow_up_at)}` : "Ikke planlagt"}</strong></div>
-            <div className="context-note"><span>SIDSTE NOTER</span><p>{lead.notes || "Ingen noter endnu. Gode noter gør næste samtale endnu bedre."}</p></div></> : <EmptyInline title="Ingen virksomhed valgt" description="Vælg et lead i opkaldskøen." />}
+            <div className="context-note"><span>LEADNOTER</span><p>{lead.notes || "Ingen noter endnu. Gode noter gør næste samtale endnu bedre."}</p></div></> : <EmptyInline title="Ingen virksomhed valgt" description="Vælg et lead i opkaldskøen." />}
         </div>
-        <div className="panel recent-panel"><div className="panel-heading"><div><span className="panel-eyebrow">GODT AT VIDE</span><h2>Seneste opkald</h2></div><Clock3 size={16} className="heading-muted" /></div>
-          {history.length ? history.map((item) => <div className="recent-call" key={item.id}><span className={`recent-call-icon ${item.outcome === "meeting_booked" ? "recent-good" : ""}`}><Phone size={14} /></span><span><strong>{item.leads?.company_name || "Virksomhed"}</strong><small>{formatDate(item.started_at)} · {formatTime(item.started_at)}</small></span><span className="recent-duration">{formatDuration(item.duration_seconds)}</span></div>) : <EmptyInline title="Ingen samtaler endnu" description="Din opkaldshistorik vises her." />}
+        <div className="panel recent-panel"><div className="panel-heading"><div><span className="panel-eyebrow">KUNDEHISTORIK</span><h2>Noter og tidligere kontakt</h2></div><Clock3 size={16} className="heading-muted" /></div>
+            {history.length ? history.map((item) => <article className="lead-history-item" key={`${item.kind}-${item.id}`}>
+              <div className="lead-history-heading"><strong>{item.kind === "call" ? `Opkald · ${statuses[item.title] || item.title}` : item.title}</strong><time>{formatDate(item.created_at)} · {formatTime(item.created_at)}</time></div>
+              {item.kind === "call" && item.duration_seconds !== null && <small>{formatDuration(item.duration_seconds)}</small>}
+              {item.body && <p>{item.body}</p>}
+              {item.recording_url && <audio controls preload="none" src={item.recording_url}>Din browser understøtter ikke lydafspilning.</audio>}
+            </article>) : historyLoading ? <span className="skeleton" /> : <EmptyInline title="Ingen tidligere kontakt" description="Opkald, noter og møder på denne virksomhed vises her." />}
         </div>
         <div className="compliance-card"><span><CheckCircle2 size={16} /></span><p><strong>Gode opkald starter med respekt.</strong> Husk altid at præsentere dig og respektere et nej.</p></div>
       </aside>
@@ -1512,7 +1893,7 @@ function DialpadView({ phone, setPhone, call, elapsed, callStarted, note, setNot
           <div className="dialpad-keys">{["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫"].map((digit) =>
             <button key={digit} aria-label={digit === "⌫" ? "Slet sidste ciffer" : `Indtast ${digit}`} onClick={() => setPhone(digit === "⌫" ? phone.slice(0, -1) : digit === "+" && phone.length ? phone : `${phone}${digit}`)}>{digit}</button>,
           )}</div>
-          <button className="button button-primary button-wide dialpad-call-button" disabled={!phone.trim()} onClick={onCall}><PhoneCall size={17} /> Ring op via Telnyx</button>
+          <button className="button button-primary button-wide dialpad-call-button" disabled={!phone.trim() || busy} onClick={onCall}><PhoneCall size={17} /> {busy ? "Forbinder headset …" : "Ring op via Telnyx"}</button>
         </>}
         <p className="dialpad-disclaimer">Opkaldet går til et rigtigt telefonnummer og kan medføre Telnyx-forbrug.</p>
       </section>

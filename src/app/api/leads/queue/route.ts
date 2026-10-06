@@ -30,7 +30,13 @@ export async function GET(request: Request) {
     .order("created_at", { ascending: true })
     .limit(500);
   if (error) {
-    console.error("Lead queue query failed", error.message);
+    console.error("Lead queue query failed", error.code, error.message);
+    if (["42703", "42P01", "PGRST204", "PGRST205"].includes(error.code)) {
+      return apiError(
+        "Opkaldskøens databaseopsætning mangler. Kør Supabase-migrationerne 20261005020000, 20261005030000 og 20261005040000 i rækkefølge, og prøv igen.",
+        503,
+      );
+    }
     return apiError("Kunne ikke hente opkaldskøen.", 500);
   }
   const candidates = (data ?? []).filter((lead) => normalizePhone(lead.phone));

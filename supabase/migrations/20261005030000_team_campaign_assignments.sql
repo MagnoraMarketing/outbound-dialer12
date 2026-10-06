@@ -1,17 +1,36 @@
+create unique index if not exists campaigns_team_id_unique_idx
+  on nordcall.campaigns (team_id, id);
+create unique index if not exists lead_lists_team_id_unique_idx
+  on nordcall.lead_lists (team_id, id);
+create unique index if not exists profiles_assignment_team_unique_idx
+  on nordcall.profiles (id, team_id);
+
 create table nordcall.campaign_assignments (
   team_id uuid not null references nordcall.teams(id) on delete cascade,
-  campaign_id uuid not null references nordcall.campaigns(id) on delete cascade,
-  user_id uuid not null references nordcall.profiles(id) on delete cascade,
+  campaign_id uuid not null,
+  user_id uuid not null,
   created_at timestamptz not null default now(),
-  primary key (team_id, campaign_id, user_id)
+  primary key (team_id, campaign_id, user_id),
+  constraint campaign_assignments_campaign_team_fk
+    foreign key (team_id, campaign_id)
+    references nordcall.campaigns(team_id, id) on delete cascade,
+  constraint campaign_assignments_user_team_fk
+    foreign key (user_id, team_id)
+    references nordcall.profiles(id, team_id) on delete cascade
 );
 
 create table nordcall.lead_list_assignments (
   team_id uuid not null references nordcall.teams(id) on delete cascade,
-  lead_list_id uuid not null references nordcall.lead_lists(id) on delete cascade,
-  user_id uuid not null references nordcall.profiles(id) on delete cascade,
+  lead_list_id uuid not null,
+  user_id uuid not null,
   created_at timestamptz not null default now(),
-  primary key (team_id, lead_list_id, user_id)
+  primary key (team_id, lead_list_id, user_id),
+  constraint lead_list_assignments_lead_list_team_fk
+    foreign key (team_id, lead_list_id)
+    references nordcall.lead_lists(team_id, id) on delete cascade,
+  constraint lead_list_assignments_user_team_fk
+    foreign key (user_id, team_id)
+    references nordcall.profiles(id, team_id) on delete cascade
 );
 
 create index campaign_assignments_user_idx on nordcall.campaign_assignments (user_id, team_id);

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
-import { telephonyProvider } from "@/lib/telephony/telnyx";
 
 export async function POST(request: Request) {
   const result = await requireContext();
@@ -26,11 +25,6 @@ export async function POST(request: Request) {
   }
   const phone = normalizePhone(lead?.phone ?? body.phone);
   if (!phone) return apiError("Telefonnummeret er ugyldigt.", 422);
-  const apiKey = process.env.TELNYX_API_KEY;
-  const connectionId = process.env.TELNYX_CONNECTION_ID;
-  const callerId = process.env.TELNYX_PHONE_NUMBER;
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
-  if (!apiKey || !connectionId || !callerId || !appUrl) return apiError("Telnyx er ikke konfigureret. Kontakt administratoren.", 503);
 
   if (lead) {
     const { data: activeCall } = await context.supabase.from("calls")
@@ -50,40 +44,11 @@ export async function POST(request: Request) {
     return apiError("Opkaldet kunne ikke oprettes. Kontrollér, at virksomheden ikke allerede er i et opkald.", 409);
   }
 
-  try {
-    const { callControlId } = await telephonyProvider.startCall({
-      to: phone,
-      from: callerId,
-      connectionId,
-      webhookUrl: `${appUrl.replace(/\/$/, "")}/api/calls/webhook`,
-    });
-    const { error: updateError } = await context.supabase.from("calls")
-      .update({ telnyx_call_id: callControlId, status: "initiated" }).eq("id", call.id);
-    if (updateError) {
-      console.error("Could not attach Telnyx call ID", updateError.message);
-      try {
-        await telephonyProvider.endCall(callControlId);
-      } catch (hangupError) {
-        console.error("Could not stop call after call record update failed", hangupError);
-      }
-      const { error: failedUpdateError } = await context.supabase.from("calls").update({
-        status: "failed",
-        outcome: "failed",
-        ended_at: new Date().toISOString(),
-      }).eq("id", call.id);
-      if (failedUpdateError) console.error("Could not mark unregistered Telnyx call as failed", failedUpdateError.message);
-      return apiError("Opkaldet er startet, men registreringen fejlede. Kontakt administratoren.", 500);
-    }
-    if (lead) {
-      const { error: leadUpdateError } = await context.supabase.from("leads")
-        .update({ last_contacted_at: new Date().toISOString() }).eq("id", lead.id);
-      if (leadUpdateError) console.error("Lead contact timestamp could not be updated", leadUpdateError.message);
-    }
-    await writeAudit(context, "call_started", "call", call.id, { phone, manual: !lead });
-    return NextResponse.json({ data: { ...call, telnyx_call_id: callControlId, status: "initiated" } }, { status: 201 });
-  } catch (error) {
-    console.error("Telnyx outbound call failed", error);
-    await context.supabase.from("calls").update({ status: "failed", ended_at: new Date().toISOString() }).eq("id", call.id);
-    return apiError(error instanceof Error ? error.message : "Opkaldet kunne ikke startes.", 502);
+  if (lead) {
+    const { error: leadUpdateError } = await context.supabase.from("leads")
+      .update({ last_contacted_at: new Date().toISOString() }).eq("id", lead.id);
+    if (leadUpdateError) console.error("Lead contact timestamp could not be updated", leadUpdateError.message);
   }
+  await writeAudit(context, "call_started", "call", call.id, { phone, manual: !lead, transport: "webrtc" });
+  return NextResponse.json({ data: call }, { status: 201 });
 }

@@ -8,7 +8,7 @@ export async function GET() {
   if (context.profile.role === "salesperson") return apiError("Kun ledere og administratorer har adgang til teamet.", 403);
   if (context.profile.role !== "admin") {
     const { data, error } = await context.supabase.from("profiles")
-      .select("id, full_name, role, created_at").eq("team_id", context.profile.team_id).order("full_name");
+      .select("id, full_name, role, created_at, recordings_enabled").eq("team_id", context.profile.team_id).order("full_name");
     if (error) {
       console.error("Team query failed", error.message);
       return apiError("Kunne ikke hente teamet.", 500);
@@ -18,7 +18,7 @@ export async function GET() {
   try {
     const admin = createSupabaseAdminClient();
     const [profiles, campaigns, lists, campaignAssignments, listAssignments] = await Promise.all([
-      admin.from("profiles").select("id, full_name, role, created_at")
+      admin.from("profiles").select("id, full_name, role, created_at, recordings_enabled")
         .eq("team_id", context.profile.team_id).order("full_name"),
       admin.from("campaigns").select("id, name, created_at").eq("team_id", context.profile.team_id)
         .order("created_at", { ascending: false }),
@@ -59,8 +59,10 @@ export async function PATCH(request: Request) {
   const hasName = body.full_name !== undefined;
   const hasCampaigns = body.campaign_ids !== undefined;
   const hasLists = body.lead_list_ids !== undefined;
-  if (!hasRole && !hasName && !hasCampaigns && !hasLists) return apiError("Der er ingen ændringer at gemme.");
+  const hasRecordingSetting = body.recordings_enabled !== undefined;
+  if (!hasRole && !hasName && !hasCampaigns && !hasLists && !hasRecordingSetting) return apiError("Der er ingen ændringer at gemme.");
   if (hasRole && !["admin", "manager", "salesperson"].includes(String(body.role))) return apiError("Vælg en gyldig rolle.");
+  if (hasRecordingSetting && typeof body.recordings_enabled !== "boolean") return apiError("Vælg en gyldig indstilling for samtaleoptagelser.");
   const fullName = typeof body.full_name === "string" ? body.full_name.trim() : null;
   if (hasName && (!fullName || fullName.length > 120)) return apiError("Navnet skal være 1–120 tegn.");
   let campaignIds = hasCampaigns && Array.isArray(body.campaign_ids)
@@ -91,10 +93,11 @@ export async function PATCH(request: Request) {
       if (error || data.length !== leadListIds.length) return apiError("En leadliste tilhører ikke dit team.", 400);
       if (campaignIds) campaignIds = [...new Set([...campaignIds, ...data.map((list) => list.campaign_id)])];
     }
-    if (hasRole || hasName) {
+    if (hasRole || hasName || hasRecordingSetting) {
       const { error } = await admin.from("profiles").update({
         ...(hasRole ? { role: body.role as "admin" | "manager" | "salesperson" } : {}),
         ...(hasName ? { full_name: fullName! } : {}),
+        ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled as boolean } : {}),
       }).eq("id", member.id).eq("team_id", context.profile.team_id);
       if (error) {
         console.error("Team profile update failed", error.message);
@@ -138,6 +141,7 @@ export async function PATCH(request: Request) {
     await writeAudit(context, "team_member_updated", "profile", member.id, {
       ...(hasRole ? { role: body.role } : {}),
       ...(hasName ? { full_name: fullName } : {}),
+      ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled } : {}),
       ...(campaignIds ? { campaign_ids: campaignIds } : {}),
       ...(leadListIds ? { lead_list_ids: leadListIds } : {}),
     });

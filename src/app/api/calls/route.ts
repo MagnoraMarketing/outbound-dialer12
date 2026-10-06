@@ -12,5 +12,9 @@ export async function GET() {
     console.error("Call history query failed", error.message);
     return apiError("Kunne ikke hente opkaldshistorik.", 500);
   }
-  return NextResponse.json({ data });
+  const calls = (data ?? []).map((call) => ({
+    ...call,
+    recording_url: result.context.profile.recordings_enabled ? call.recording_url : null,
+  }));
+  return NextResponse.json({ data: calls });
 }
