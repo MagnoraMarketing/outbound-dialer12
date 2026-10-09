@@ -5,7 +5,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
-  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Handshake, ChevronLeft, ChevronRight,
+  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
   Target, Timer, Trash2, Users, X,
@@ -16,6 +16,8 @@ import {
   type AdminFeedbackMeeting, type MeetingFeedbackInfo,
 } from "@/components/meeting-feedback-views";
 import { PartnersView, type PartnerData } from "@/components/partners-view";
+import { MagnoraEmpire } from "@/components/game/magnora-empire";
+import { EarningsApprovals } from "@/components/earnings-approvals";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
 type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
@@ -86,7 +88,7 @@ type AdminOverview = {
   totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
   campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
 };
-type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "messages" | "settings";
+type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "game" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -117,7 +119,11 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "team", title: "Team", icon: Users },
     { id: "partners", title: "Samarbejdspartnere", icon: Handshake },
     { id: "feedback", title: "Mødefeedback", icon: ClipboardCheck },
+    { id: "earnings", title: "Godkend indtjening", icon: BadgeCheck },
     { id: "settings", title: "Indstillinger", icon: Settings2 },
+  ] },
+  { label: "MAGNORA EMPIRE", items: [
+    { id: "game", title: "Spil", icon: Gamepad2 },
   ] },
 ];
 const csvFields: { key: CsvField; label: string }[] = [
@@ -1465,7 +1471,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", game: "Magnora Empire",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
@@ -1489,7 +1495,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
               && (item.id !== "team" || profile.role === "admin")
-              && (!["partners", "feedback"].includes(item.id) || profile.role === "admin"));
+              && (!["partners", "feedback", "earnings"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
@@ -1608,7 +1614,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             onCreateLogin={(input) => partnerAction("/api/admin/partners/users", "POST", input, "Login er oprettet. Partneren logger ind på /kunde.")}
             onDeleteLogin={(userId) => partnerAction(`/api/admin/partners/users?user_id=${encodeURIComponent(userId)}`, "DELETE", null, "Login er slettet.")}
           />}
-          {page === "settings" && <SettingsView user={user} profile={profile} />}
+          {page === "earnings" && profile.role === "admin" && <EarningsApprovals />}
+          {page === "game" && <MagnoraEmpire />}
+          {page === "settings" && <SettingsView user={user} profile={profile} onChangePassword={async (password) => {
+            if (!supabase) throw new Error("Login er ikke konfigureret.");
+            const { error: passwordError } = await supabase.auth.updateUser({ password });
+            if (passwordError) throw new Error("Adgangskoden kunne ikke ændres. Log ud og ind igen, og prøv igen.");
+          }} />}
         </div>
       </main>
       {modal && <Modal title={modal === "lead" ? "Tilføj virksomhed" : modal === "callback" ? "Planlæg callback" : "Book et møde"} onClose={() => setModal(null)}>
@@ -2485,18 +2497,76 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
   </section>;
 }
 
-function SettingsView({ user, profile }: { user: User; profile: Profile }) {
+function SettingsView({ user, profile, onChangePassword }: { user: User; profile: Profile; onChangePassword: (password: string) => Promise<void> }) {
+  const isAdmin = profile.role === "admin";
   return <div className="view">
     <div className="page-heading"><div><span className="eyebrow">GODT AT HAVE STYR PÅ</span><h1>Indstillinger</h1><p>Din konto og de vigtigste oplysninger samlet ét sted.</p></div></div>
     <div className="settings-grid"><section className="panel settings-panel"><div className="panel-heading"><div><span className="panel-eyebrow">DIN KONTO</span><h2>Profil</h2></div><Users size={17} className="heading-muted" /></div>
       <div className="settings-profile"><div className="avatar avatar-0">{initials(profile.full_name || user.email || "S")}</div><div><strong>{profile.full_name || "Nordcall-bruger"}</strong><span>{user.email}</span></div></div>
-      <SettingLine label="Din rolle" value={friendlyRole(profile.role)} /><SettingLine label="Team" value={profile.team_id ? "Aktivt team" : "Intet team"} /><SettingLine label="Loginmetode" value="E-mail og adgangskode" />
-      <div className="settings-callout"><CheckCircle2 size={16} /><p>Adgangskoder og sessioner håndteres sikkert af Supabase Auth. Kontakt din administrator for rolleændringer.</p></div>
+      <SettingLine label="Din rolle" value={friendlyRole(profile.role)} /><SettingLine label="Team" value={profile.team_id ? "Aktivt team" : "Intet team"} />
+      {isAdmin && <SettingLine label="Loginmetode" value="E-mail og adgangskode" />}
+      <PasswordForm onChangePassword={onChangePassword} />
+      <div className="settings-callout"><CheckCircle2 size={16} /><p>{isAdmin ? "Adgangskoder og sessioner håndteres sikkert af Supabase Auth." : "Kampagner, ringelister og telefonnummer sættes op af din administrator."} Kontakt din administrator for rolleændringer.</p></div>
     </section>
-    <section className="panel settings-panel"><div className="panel-heading"><div><span className="panel-eyebrow">TELEFONI</span><h2>Opkaldsopsætning</h2></div><Phone size={16} className="heading-muted" /></div>
-      <SettingLine label="Telefoniudbyder" value="Telnyx" /><SettingLine label="Forbindelse" value="Serverkonfigureret" /><SettingLine label="Opkald optages" value={profile.call_recording_enabled ? "Ja · administratoren har aktiveret optagelse" : "Nej"} />
+    {isAdmin ? <section className="panel settings-panel"><div className="panel-heading"><div><span className="panel-eyebrow">TELEFONI</span><h2>Opkaldsopsætning</h2></div><Phone size={16} className="heading-muted" /></div>
+      <SettingLine label="Telefoniudbyder" value="Telnyx" /><SettingLine label="Forbindelse" value="Serverkonfigureret" /><SettingLine label="Dine opkald optages" value={profile.call_recording_enabled ? "Ja" : "Nej"} />
       <div className="settings-callout settings-warning"><CircleHelp size={16} /><p>Optagelse aktiveres kun af en administrator pr. bruger. Informér deltagerne, og afklar samtykke, formål og opbevaring før optagelse aktiveres.</p></div>
-    </section></div>
+    </section> : <section className="panel settings-panel"><div className="panel-heading"><div><span className="panel-eyebrow">DINE OPKALD</span><h2>Klar til at ringe</h2></div><Headphones size={16} className="heading-muted" /></div>
+      <SettingLine label="Dine opkald optages" value={profile.call_recording_enabled ? "Ja – informér kunden ved opkaldets start" : "Nej"} />
+      <MicrophoneCheck />
+      <div className="settings-callout"><CircleHelp size={16} /><p>Brug et headset for den bedste lyd. Tillad mikrofon i browseren, når du bliver spurgt, første gang du ringer.</p></div>
+    </section>}</div>
+  </div>;
+}
+
+function PasswordForm({ onChangePassword }: { onChangePassword: (password: string) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [failure, setFailure] = useState("");
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const password = String(form.get("password") ?? "");
+    setMessage("");
+    setFailure("");
+    if (password.length < 8) { setFailure("Adgangskoden skal være mindst 8 tegn."); return; }
+    if (password !== String(form.get("password_confirmation") ?? "")) { setFailure("Adgangskoderne er ikke ens."); return; }
+    setBusy(true);
+    try {
+      await onChangePassword(password);
+      formElement.reset();
+      setMessage("Din adgangskode er ændret.");
+    } catch (changeError) {
+      setFailure(changeError instanceof Error ? changeError.message : "Adgangskoden kunne ikke ændres.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return <form className="settings-password" onSubmit={submit}>
+    <strong>Skift adgangskode</strong>
+    <input name="password" type="password" autoComplete="new-password" minLength={8} required placeholder="Ny adgangskode (mindst 8 tegn)" aria-label="Ny adgangskode" />
+    <input name="password_confirmation" type="password" autoComplete="new-password" minLength={8} required placeholder="Gentag ny adgangskode" aria-label="Gentag ny adgangskode" />
+    {failure && <p className="form-error">{failure}</p>}
+    {message && <p className="form-success">{message}</p>}
+    <button className="button button-secondary" disabled={busy}>{busy ? "Gemmer …" : "Gem ny adgangskode"}</button>
+  </form>;
+}
+
+function MicrophoneCheck() {
+  const [status, setStatus] = useState<"idle" | "ok" | "denied">("idle");
+  async function check() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setStatus("ok");
+    } catch {
+      setStatus("denied");
+    }
+  }
+  return <div className="setting-line"><span>Mikrofon</span>
+    {status === "idle" ? <button className="text-button" onClick={() => void check()}>Test mikrofon</button>
+      : <strong>{status === "ok" ? "Virker" : "Ingen adgang – tillad mikrofon i browseren"}</strong>}
   </div>;
 }
 

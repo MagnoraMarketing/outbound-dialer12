@@ -1,0 +1,100 @@
+"use client";
+
+import { BadgeCheck, CircleX, Search } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { feedbackLabels, type FeedbackStatus } from "@/lib/feedback-labels";
+
+type Decision = { status: "approved" | "rejected"; amount_dkk: number; decided_at: string } | null;
+type EarningItem = {
+  source_type: "meeting" | "sale"; source_id: string; user_id: string; seller_name: string; occurred_at: string;
+  company_name: string | null; campaign_name: string; partner_status: FeedbackStatus | null; suggested_dkk: number; decision: Decision;
+};
+
+async function earningsApi<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, { ...options, headers: { ...(options?.body ? { "Content-Type": "application/json" } : {}) } });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.error ?? "Noget gik galt. Prøv igen.");
+  return body as T;
+}
+
+// Admin queue: approving a meeting or sale is what makes it verified sales
+// earnings (DKK) and releases the related game rewards.
+export function EarningsApprovals() {
+  const [items, setItems] = useState<EarningItem[] | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [filter, setFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
+  const [type, setType] = useState<"all" | "meeting" | "sale">("all");
+  const [query, setQuery] = useState("");
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [busyKey, setBusyKey] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      setItems((await earningsApi<{ data: EarningItem[] }>("/api/admin/earnings")).data);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Listen kunne ikke hentes.");
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  async function decide(item: EarningItem, status: "approved" | "rejected") {
+    const key = `${item.source_type}:${item.source_id}`;
+    const amount = Number((amounts[key] ?? String(item.decision?.amount_dkk ?? item.suggested_dkk)).replace(",", "."));
+    if (status === "approved" && (!Number.isFinite(amount) || amount < 0)) { setError("Skriv et gyldigt beløb i DKK."); return; }
+    setBusyKey(key);
+    setError("");
+    try {
+      await earningsApi("/api/admin/earnings", { method: "PUT", body: JSON.stringify({ source_type: item.source_type, source_id: item.source_id, status, amount_dkk: amount }) });
+      setNotice(status === "approved" ? `Godkendt: ${amount.toLocaleString("da-DK")} DKK til ${item.seller_name}.` : "Afvist.");
+      await load();
+    } catch (decideError) {
+      setError(decideError instanceof Error ? decideError.message : "Beslutningen kunne ikke gemmes.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
+  const visible = (items ?? []).filter((item) => (type === "all" || item.source_type === type)
+    && (filter === "all" || (filter === "pending" ? !item.decision : item.decision?.status === filter))
+    && (!query || `${item.seller_name} ${item.company_name ?? ""} ${item.campaign_name}`.toLocaleLowerCase("da-DK").includes(query.toLocaleLowerCase("da-DK"))));
+  const pending = (items ?? []).filter((item) => !item.decision).length;
+
+  return <div className="view">
+    <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION · SENESTE 180 DAGE</span><h1>Godkend indtjening</h1>
+      <p>Godkendte møder og salg bliver til verificeret salgsindtjening i DKK. Det tæller mod Magnora Market og udløser spilbelønninger.</p></div>
+      <span className="secure-tag"><BadgeCheck size={15} /> {pending} afventer</span></div>
+    {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span>
+      <button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><CircleX size={16} /></button></div>}
+    <section className="panel ea-panel">
+      <div className="ea-toolbar">
+        <div className="mg-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Søg sælger, virksomhed eller kampagne" aria-label="Søg" /></div>
+        <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="Status">
+          <option value="pending">Afventer</option><option value="approved">Godkendt</option><option value="rejected">Afvist</option><option value="all">Alle</option></select>
+        <select value={type} onChange={(event) => setType(event.target.value as typeof type)} aria-label="Type">
+          <option value="all">Møder og salg</option><option value="meeting">Møder</option><option value="sale">Salg</option></select>
+      </div>
+      <p className="mg-fineprint">Beløbet er foreslået ud fra provisionssatsen i sælgerens budget for kampagnen. Ret det, hvis den aftalte indtjening er en anden.</p>
+      <div className="table-scroll"><table className="ea-table"><thead><tr><th>Dato</th><th>Type</th><th>Sælger</th><th>Virksomhed / kampagne</th><th>Partnerens status</th><th>DKK</th><th>Beslutning</th></tr></thead>
+        <tbody>{visible.map((item) => {
+          const key = `${item.source_type}:${item.source_id}`;
+          return <tr key={key}>
+            <td>{new Date(item.occurred_at).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}</td>
+            <td>{item.source_type === "meeting" ? "Møde" : "Salg"}</td>
+            <td>{item.seller_name}</td>
+            <td><strong>{item.company_name ?? "Registreret salg"}</strong><small className="table-sub">{item.campaign_name || "—"}</small></td>
+            <td>{item.partner_status ? <span className={`fb-badge fb-${item.partner_status}`}>{feedbackLabels[item.partner_status]}</span> : <span className="fb-muted">—</span>}</td>
+            <td><input className="ea-amount" inputMode="decimal" aria-label="Beløb i DKK" value={amounts[key] ?? String(item.decision?.amount_dkk ?? item.suggested_dkk)}
+              onChange={(event) => setAmounts({ ...amounts, [key]: event.target.value })} /></td>
+            <td><div className="ea-actions">
+              {item.decision && <span className={`fb-badge ${item.decision.status === "approved" ? "fb-good" : "fb-overdue"}`}>{item.decision.status === "approved" ? "Godkendt" : "Afvist"}</span>}
+              <button className="button button-primary" disabled={busyKey === key} onClick={() => void decide(item, "approved")}>{item.decision?.status === "approved" ? "Opdatér" : "Godkend"}</button>
+              {item.decision?.status !== "rejected" && <button className="button button-secondary" disabled={busyKey === key} onClick={() => void decide(item, "rejected")}>Afvis</button>}
+            </div></td>
+          </tr>;
+        })}
+          {!visible.length && <tr><td colSpan={7} className="fb-empty">{items ? "Intet at vise med de valgte filtre." : "Henter …"}</td></tr>}
+        </tbody></table></div>
+    </section>
+  </div>;
+}
