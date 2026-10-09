@@ -5,7 +5,7 @@ import { getAuthenticatedContext } from "@/lib/supabase/server";
 type AuthContext = {
   supabase: SupabaseClient;
   user: User;
-  profile: { id: string; team_id: string; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
+  profile: { id: string; team_id: string; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean; access_mode?: "all" | "assigned"; can_dial_manual?: boolean };
 };
 
 export function apiError(message: string, status = 400) {

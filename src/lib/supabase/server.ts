@@ -33,7 +33,7 @@ export async function getAuthenticatedContext() {
   if (userError || !user) return { error: "Log ind for at fortsætte.", status: 401 as const };
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled")
+    .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled, access_mode, can_dial_manual")
     .eq("id", user.id)
     .single();
   if (profileError || !profile) return { error: "Din brugerprofil mangler et team. Kontakt administratoren.", status: 403 as const };

@@ -21,7 +21,8 @@ import { EarningsApprovals } from "@/components/earnings-approvals";
 import { PhoneNumbersView } from "@/components/phone-numbers-view";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
-type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
+type AccessMode = "all" | "assigned";
+type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean; access_mode?: AccessMode; can_dial_manual?: boolean };
 type Lead = {
   id: string; company_name: string; cvr: string | null; contact_person: string | null; phone: string;
   email?: string | null; website?: string | null; address?: string | null; city: string | null;
@@ -77,6 +78,7 @@ type Meeting = {
 };
 type TeamMember = {
   id: string; full_name: string; role: Profile["role"]; created_at: string; recordings_enabled: boolean; call_recording_enabled: boolean;
+  access_mode: AccessMode; can_dial_manual: boolean;
   campaign_ids?: string[]; lead_list_ids?: string[];
 };
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
@@ -445,7 +447,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         return;
       }
       const { data, error: profileError } = await client.from("profiles")
-        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled").eq("id", currentUser.id).maybeSingle();
+        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled, access_mode, can_dial_manual").eq("id", currentUser.id).maybeSingle();
       if (!alive) return;
       if (profileError) {
         console.error("Nordcall profile lookup failed", profileError.code, profileError.message);
@@ -861,7 +863,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       const { error: teamError } = await supabase.rpc("create_team_for_current_user", { team_name: teamName });
       if (teamError) throw teamError;
       const { data, error: profileError } = await supabase.from("profiles")
-        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled").eq("id", user.id).single();
+        .select("id, team_id, full_name, role, recordings_enabled, call_recording_enabled, access_mode, can_dial_manual").eq("id", user.id).single();
       if (profileError) throw new Error("Dit team blev oprettet, men profilen kunne ikke indlæses. Genindlæs siden.");
       setProfile(data as Profile);
     } catch (teamError) {
@@ -1497,7 +1499,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           {navGroups.map((group) => {
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
+              && (item.id !== "leads" || profile.role !== "salesperson")
               && (item.id !== "team" || profile.role === "admin")
+              && (item.id !== "dialpad" || profile.role === "admin" || profile.can_dial_manual !== false)
               && (!["partners", "feedback", "earnings", "numbers"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
@@ -1547,7 +1551,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             report={budgetReport} loading={loading} userId={user.id} role={profile.role}
             onSave={saveCampaignBudget} onRecord={recordBudgetEvent}
           />}
-          {page === "leads" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
+          {page === "leads" && profile.role !== "salesperson" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
             lead={activeLead} queueCount={queue.length} loading={loading} leadListsLoading={leadListsLoading}
             call={activeCall} elapsed={elapsed} callStarted={callStarted} voiceState={voiceState}
@@ -1589,11 +1593,11 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
             budgets={budgetReport} onSaveBudget={saveBudget}
             onInvite={() => setModal("invite")}
-            onSave={async (memberId, fullName, role, campaignIds, leadListIds, callRecordingEnabled) => {
+            onSave={async (memberId, fullName, role, campaignIds, leadListIds, callRecordingEnabled, accessMode, canDialManual) => {
               try {
                 await api("/api/team", { method: "PATCH", body: JSON.stringify({
                   user_id: memberId, full_name: fullName, role, campaign_ids: campaignIds, lead_list_ids: leadListIds,
-                  call_recording_enabled: callRecordingEnabled,
+                  call_recording_enabled: callRecordingEnabled, access_mode: accessMode, can_dial_manual: canDialManual,
                 }) });
                 setNotice("Brugerprofil og tildelinger er gemt.");
                 void loadPageData("team");
@@ -2283,7 +2287,7 @@ function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInv
   members: TeamMember[]; loading: boolean; role: Profile["role"]; campaigns: Campaign[]; leadLists: LeadList[];
   budgets: BudgetReport | null;
   onInvite: () => void;
-  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean) => void;
+  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean, accessMode: AccessMode, canDialManual: boolean) => void;
   onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
   return <div className="view">
@@ -2454,19 +2458,23 @@ function MessagesView({ messages, loading, userId, role, campaigns, leadLists, o
 
 function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
   member: TeamMember; index: number; campaigns: Campaign[]; leadLists: LeadList[];
-  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean) => void;
+  onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean, accessMode: AccessMode, canDialManual: boolean) => void;
 }) {
   const [fullName, setFullName] = useState(member.full_name);
   const [role, setRole] = useState<ManagedRole>(member.role === "admin" ? "admin" : "user");
   const [campaignIds, setCampaignIds] = useState(member.campaign_ids ?? []);
   const [leadListIds, setLeadListIds] = useState(member.lead_list_ids ?? []);
   const [callRecordingEnabled, setCallRecordingEnabled] = useState(member.call_recording_enabled);
+  const [accessMode, setAccessMode] = useState<AccessMode>(member.access_mode ?? "all");
+  const [canDialManual, setCanDialManual] = useState(member.can_dial_manual ?? true);
   useEffect(() => {
     setFullName(member.full_name);
     setRole(member.role === "admin" ? "admin" : "user");
     setCampaignIds(member.campaign_ids ?? []);
     setLeadListIds(member.lead_list_ids ?? []);
     setCallRecordingEnabled(member.call_recording_enabled);
+    setAccessMode(member.access_mode ?? "all");
+    setCanDialManual(member.can_dial_manual ?? true);
   }, [member]);
   const toggle = (ids: string[], setIds: (next: string[]) => void, id: string) => {
     setIds(ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id]);
@@ -2480,7 +2488,15 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
       </select></label>
       <span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span>
     </div>
-    <div className="member-assignment-grid">
+    {role !== "admin" && <fieldset className="access-mode">
+      <legend>Adgang til opkald</legend>
+      <label><input type="radio" name={`access-${member.id}`} checked={accessMode === "all"} onChange={() => setAccessMode("all")} />
+        <span><strong>Alle kampagner og leadlister</strong><small>Standard. Sælgeren kan ringe på alt i teamet.</small></span></label>
+      <label><input type="radio" name={`access-${member.id}`} checked={accessMode === "assigned"} onChange={() => setAccessMode("assigned")} />
+        <span><strong>Kun tildelte</strong><small>Sælgeren ser kun de kampagner og leadlister, du vælger nedenfor.</small></span></label>
+    </fieldset>}
+    {(role === "admin" || accessMode === "all") ? <p className="access-note">{role === "admin" ? "Administratorer har adgang til alt." : "Har adgang til alle kampagner og leadlister. Vælg \"Kun tildelte\" for at begrænse."}</p>
+    : <div className="member-assignment-grid">
       <fieldset><legend>Kampagner</legend>
         {campaigns.length ? campaigns.map((campaign) => <label key={campaign.id}>
           <input type="checkbox" checked={campaignIds.includes(campaign.id)} onChange={() => toggle(campaignIds, setCampaignIds, campaign.id)} />
@@ -2493,10 +2509,11 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
           {list.name} · {campaigns.find((campaign) => campaign.id === list.campaign_id)?.name ?? "Kampagne"}
         </label>) : <small>Leadlister vises, når de er oprettet.</small>}
       </fieldset>
-    </div>
+    </div>}
     <label className="recording-permission"><input type="checkbox" checked={callRecordingEnabled} onChange={(event) => setCallRecordingEnabled(event.target.checked)} /> Optag denne brugers opkald</label>
-    <div className="admin-member-footer"><span>{campaignIds.length} kampagner · {leadListIds.length} leadlister tildelt</span>
-      <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds, callRecordingEnabled)}>Gem ændringer</button>
+    {role !== "admin" && <label className="recording-permission"><input type="checkbox" checked={canDialManual} onChange={(event) => setCanDialManual(event.target.checked)} /> Må ringe til frie numre fra Dialpad</label>}
+    <div className="admin-member-footer"><span>{role === "admin" || accessMode === "all" ? "Fuld adgang" : `${campaignIds.length} kampagner · ${leadListIds.length} leadlister tildelt`}</span>
+      <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds, callRecordingEnabled, accessMode, canDialManual)}>Gem ændringer</button>
     </div>
   </section>;
 }

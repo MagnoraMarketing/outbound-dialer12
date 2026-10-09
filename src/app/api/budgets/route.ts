@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
+import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
 
 function copenhagenToday() {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen" }).format(new Date());
@@ -109,6 +109,12 @@ export async function GET() {
   });
 }
 
+// Owner and campaign never change on update, and sellers may not write them.
+function updatable(values: Record<string, unknown>) {
+  const { team_id: _team, user_id: _user, campaign_id: _campaign, ...rest } = values;
+  return rest;
+}
+
 export async function PUT(request: Request) {
   const result = await requireContext();
   if ("response" in result) return result.response;
@@ -152,7 +158,7 @@ export async function PUT(request: Request) {
     const { data: campaign, error: campaignError } = await context.supabase.from("campaigns")
       .select("id").eq("id", campaignId).eq("team_id", context.profile.team_id).maybeSingle();
     if (campaignError || !campaign) return apiError("Kampagnen blev ikke fundet i dit team.", campaignError ? 500 : 404);
-    if (context.profile.role !== "admin") {
+    if (context.profile.role !== "admin" && context.profile.access_mode !== "all") {
       const { data: assignment, error: assignmentError } = await context.supabase.from("campaign_assignments")
         .select("campaign_id").eq("team_id", context.profile.team_id)
         .eq("campaign_id", campaignId).eq("user_id", context.user.id).maybeSingle();
@@ -181,8 +187,11 @@ export async function PUT(request: Request) {
     const combinedWeeklyTarget = Number(weeklyMeetingTarget) + Number(weeklySaleTarget);
     Object.assign(values, {
       activity_mode: activityMode,
-      commission_per_meeting: Number(commissionPerMeeting),
-      commission_per_sale: Number(commissionPerSale),
+      // Commission rates feed verified earnings, so only administrators set them.
+      ...(context.profile.role === "admin" ? {
+        commission_per_meeting: Number(commissionPerMeeting),
+        commission_per_sale: Number(commissionPerSale),
+      } : {}),
       weekly_meeting_target: Number(weeklyMeetingTarget),
       weekly_sale_target: Number(weeklySaleTarget),
       weekly_target: combinedWeeklyTarget,
@@ -191,9 +200,20 @@ export async function PUT(request: Request) {
   } else {
     Object.assign(values, { weekly_target: Number(weeklyTarget), monthly_target: Number(monthlyTarget) });
   }
+  // Sellers write through their own session, where the database blocks the
+  // commission columns; administrators write commission rates server-side.
+  let writer = context.supabase;
+  if (context.profile.role === "admin") {
+    try {
+      writer = createSupabaseAdminClient() as unknown as typeof context.supabase;
+    } catch (error) {
+      console.error("Budget admin client setup failed", error);
+      return apiError("Budgettet kunne ikke gemmes.", 503);
+    }
+  }
   const write = existingId
-    ? await context.supabase.from("sales_targets").update(values).eq("id", existingId).select("id").maybeSingle()
-    : await context.supabase.from("sales_targets").insert(values).select("id").maybeSingle();
+    ? await writer.from("sales_targets").update(updatable(values)).eq("id", existingId).eq("team_id", context.profile.team_id).select("id").maybeSingle()
+    : await writer.from("sales_targets").insert(values).select("id").maybeSingle();
   if (write.error || !write.data) {
     console.error("Budget target save failed", write.error?.message ?? "No row returned");
     return apiError("Budgetmålet kunne ikke gemmes.", 500);

@@ -9,7 +9,7 @@ export async function GET() {
   try {
     const admin = createSupabaseAdminClient();
     const [profiles, campaigns, lists, campaignAssignments, listAssignments] = await Promise.all([
-      admin.from("profiles").select("id, full_name, role, created_at, recordings_enabled, call_recording_enabled")
+      admin.from("profiles").select("id, full_name, role, created_at, recordings_enabled, call_recording_enabled, access_mode, can_dial_manual")
         .eq("team_id", context.profile.team_id).order("full_name"),
       admin.from("campaigns").select("id, name, created_at").eq("team_id", context.profile.team_id)
         .order("created_at", { ascending: false }),
@@ -52,7 +52,11 @@ export async function PATCH(request: Request) {
   const hasLists = body.lead_list_ids !== undefined;
   const hasRecordingSetting = body.recordings_enabled !== undefined;
   const hasCallRecordingSetting = body.call_recording_enabled !== undefined;
-  if (!hasRole && !hasName && !hasCampaigns && !hasLists && !hasRecordingSetting && !hasCallRecordingSetting) return apiError("Der er ingen ændringer at gemme.");
+  const hasAccessMode = body.access_mode !== undefined;
+  const hasDialSetting = body.can_dial_manual !== undefined;
+  if (!hasRole && !hasName && !hasCampaigns && !hasLists && !hasRecordingSetting && !hasCallRecordingSetting && !hasAccessMode && !hasDialSetting) return apiError("Der er ingen ændringer at gemme.");
+  if (hasAccessMode && !["all", "assigned"].includes(String(body.access_mode))) return apiError("Vælg alle eller kun tildelte kampagner.");
+  if (hasDialSetting && typeof body.can_dial_manual !== "boolean") return apiError("Vælg om brugeren må bruge Dialpad.");
   if (hasRole && !["admin", "user"].includes(String(body.role))) return apiError("Vælg administrator eller bruger.");
   if (hasRecordingSetting && typeof body.recordings_enabled !== "boolean") return apiError("Vælg en gyldig indstilling for samtaleoptagelser.");
   if (hasCallRecordingSetting && typeof body.call_recording_enabled !== "boolean") return apiError("Vælg en gyldig indstilling for opkaldsoptagelse.");
@@ -86,12 +90,14 @@ export async function PATCH(request: Request) {
       if (error || data.length !== leadListIds.length) return apiError("En leadliste tilhører ikke dit team.", 400);
       if (campaignIds) campaignIds = [...new Set([...campaignIds, ...data.map((list) => list.campaign_id)])];
     }
-    if (hasRole || hasName || hasRecordingSetting || hasCallRecordingSetting) {
+    if (hasRole || hasName || hasRecordingSetting || hasCallRecordingSetting || hasAccessMode || hasDialSetting) {
       const { error } = await admin.from("profiles").update({
         ...(hasRole ? { role: body.role === "admin" ? "admin" : "salesperson" } : {}),
         ...(hasName ? { full_name: fullName! } : {}),
         ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled as boolean } : {}),
         ...(hasCallRecordingSetting ? { call_recording_enabled: body.call_recording_enabled as boolean } : {}),
+        ...(hasAccessMode ? { access_mode: body.access_mode as string } : {}),
+        ...(hasDialSetting ? { can_dial_manual: body.can_dial_manual as boolean } : {}),
       }).eq("id", member.id).eq("team_id", context.profile.team_id);
       if (error) {
         console.error("Team profile update failed", error.message);
@@ -137,6 +143,8 @@ export async function PATCH(request: Request) {
       ...(hasName ? { full_name: fullName } : {}),
       ...(hasRecordingSetting ? { recordings_enabled: body.recordings_enabled } : {}),
       ...(hasCallRecordingSetting ? { call_recording_enabled: body.call_recording_enabled } : {}),
+      ...(hasAccessMode ? { access_mode: body.access_mode } : {}),
+      ...(hasDialSetting ? { can_dial_manual: body.can_dial_manual } : {}),
       ...(campaignIds ? { campaign_ids: campaignIds } : {}),
       ...(leadListIds ? { lead_list_ids: leadListIds } : {}),
     });
