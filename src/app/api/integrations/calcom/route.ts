@@ -13,12 +13,12 @@ export async function GET() {
       .maybeSingle();
     if (error) {
       console.error("Cal.com connection status query failed", error.message);
-      return apiError("Cal.com-forbindelsens status kunne ikke hentes.", 500);
+      return apiError("Kalenderforbindelsens status kunne ikke hentes.", 500);
     }
     return NextResponse.json({ connected: Boolean(data), connected_at: data?.connected_at ?? null });
   } catch (error) {
     console.error("Cal.com connection status is unavailable", error);
-    return apiError("Cal.com-forbindelsen kræver SUPABASE_SERVICE_ROLE_KEY på serveren.", 503);
+    return apiError("Kalenderforbindelsen er ikke sat op. Kontakt din administrator.", 503);
   }
 }
 
@@ -31,11 +31,11 @@ export async function DELETE() {
       .delete().eq("user_id", result.context.user.id).eq("team_id", result.context.profile.team_id);
     if (error) {
       console.error("Cal.com connection disconnect failed", error.message);
-      return apiError("Cal.com-kontoen kunne ikke afkobles.", 500);
+      return apiError("Kalenderkontoen kunne ikke afkobles.", 500);
     }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Cal.com disconnect is unavailable", error);
-    return apiError("Cal.com-forbindelsen kunne ikke afkobles.", 503);
+    return apiError("Kalenderforbindelsen kunne ikke afkobles.", 503);
   }
 }

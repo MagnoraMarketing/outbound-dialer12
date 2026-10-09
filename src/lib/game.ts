@@ -36,13 +36,13 @@ export async function requirePlayer() {
     admin = createSupabaseAdminClient();
   } catch (error) {
     console.error("Game service client setup failed", error);
-    return { response: apiError("Spillet er ikke konfigureret. SUPABASE_SERVICE_ROLE_KEY mangler på serveren.", 503) } as const;
+    return { response: apiError("Spillet er ikke klar endnu. Kontakt din administrator.", 503) } as const;
   }
   const { error } = await admin.rpc("game_sync", { p_user: result.context.user.id });
   if (error) {
     console.error("Game sync failed", error.message);
     const missing = error.message.includes("game_sync") || error.code === "PGRST202";
-    return { response: apiError(missing ? "Spillets database er ikke installeret endnu. Kør migrationen for Magnora Empire." : "Spillet kunne ikke indlæses.", missing ? 503 : 500) } as const;
+    return { response: apiError(missing ? "Spillet er ikke klar endnu. Kontakt din administrator." : "Spillet kunne ikke indlæses.", missing ? 503 : 500) } as const;
   }
   return { context: result.context, admin, userId: result.context.user.id, teamId: result.context.profile.team_id } as const;
 }

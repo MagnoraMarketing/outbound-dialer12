@@ -33,7 +33,7 @@ export async function GET(request: Request) {
     console.error("Lead queue query failed", error.code, error.message);
     if (["42703", "42P01", "PGRST204", "PGRST205"].includes(error.code)) {
       return apiError(
-        "Opkaldskøens databaseopsætning mangler. Kør Supabase-migrationerne 20261005020000, 20261005030000 og 20261005040000 i rækkefølge, og prøv igen.",
+        "Opkaldskøen er ikke klar endnu. Kontakt din administrator.",
         503,
       );
     }

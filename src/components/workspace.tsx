@@ -449,8 +449,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       if (profileError) {
         console.error("Nordcall profile lookup failed", profileError.code, profileError.message);
         setAuthError(profileError.code === "PGRST106"
-          ? "Nordcall-databasen er ikke eksponeret i Supabase. Tilføj nordcall under Project Settings → API → Exposed schemas."
-          : "Brugerprofilen kunne ikke indlæses. Kontrollér, at Nordcall-migrationen er kørt, og at nordcall er eksponeret i Supabase.");
+          ? "Systemet er ikke klar endnu. Kontakt din administrator."
+          : "Brugerprofilen kunne ikke indlæses. Prøv igen, eller kontakt din administrator.");
       } else if (data) {
         setProfile(data as Profile);
       } else {
@@ -530,7 +530,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         rejectReady = reject;
       });
       const connectionTimeout = window.setTimeout(() => {
-        rejectReady(new Error("Telnyx kunne ikke forbinde. Kontrollér netværket, og prøv igen."));
+        rejectReady(new Error("Telefonforbindelsen kunne ikke oprettes. Kontrollér netværket, og prøv igen."));
       }, 20_000);
 
       client.on("telnyx.ready", () => {
@@ -539,7 +539,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         resolveReady();
       });
       client.on("telnyx.error", (event) => {
-        const message = event.error.message || event.error.description || "Telnyx-forbindelsen fejlede.";
+        // Provider error text is logged, never shown to sellers.
+        console.error("Phone connection error", event.error);
+        const message = "Telefonforbindelsen fejlede. Prøv igen om et øjeblik.";
         if (!ready) rejectReady(new Error(message));
         else setError(message);
       });
@@ -581,7 +583,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
       voiceClientRef.current = client;
       void client.connect().catch((connectionError: unknown) => {
-        rejectReady(connectionError instanceof Error ? connectionError : new Error("Telnyx kunne ikke forbinde."));
+        rejectReady(connectionError instanceof Error ? connectionError : new Error("Telefonforbindelsen kunne ikke oprettes."));
       });
       try {
         await readyPromise;
@@ -652,10 +654,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           body: JSON.stringify({ action: "prepare", content_type: contentType }),
         });
         const storageClient = supabase ?? browserSupabase();
-        if (!storageClient) throw new Error("Supabase Storage er ikke tilgængelig.");
+        if (!storageClient) throw new Error("Optagelsen kunne ikke gemmes lige nu.");
         const { error: uploadError } = await storageClient.storage.from("call-recordings")
           .uploadToSignedUrl(upload.path, upload.token, blob, { contentType: upload.content_type });
-        if (uploadError) throw new Error("Optagelsen kunne ikke uploades sikkert: " + uploadError.message);
+        if (uploadError) {
+          console.error("Recording upload failed", uploadError.message);
+          throw new Error("Optagelsen kunne ikke gemmes sikkert.");
+        }
         await api(`/api/calls/${callId}/recording`, {
           method: "POST",
           body: JSON.stringify({ action: "finalize", path: upload.path }),
@@ -703,8 +708,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       setActiveCall(result.data);
       setCallStarted(Date.now());
       setElapsed(0);
-      if (!client.connected) throw new Error("Telnyx-forbindelsen blev afbrudt. Prøv at ringe igen.");
-      if (!callerNumberRef.current) throw new Error("Telnyx har ikke returneret et udgående nummer.");
+      if (!client.connected) throw new Error("Telefonforbindelsen blev afbrudt. Prøv at ringe igen.");
+      if (!callerNumberRef.current) throw new Error("Der er ikke tildelt et udgående nummer. Kontakt din administrator.");
       telnyxCallRef.current = client.newCall({
         destinationNumber: result.data.phone,
         callerNumber: callerNumberRef.current,
@@ -833,7 +838,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       if (voiceClientRef.current) await voiceClientRef.current.disconnect();
     } catch (disconnectError) {
       console.error("Telnyx call cleanup during logout failed", disconnectError);
-      setError("Telnyx-opkaldet kunne ikke afsluttes sikkert. Prøv igen om et øjeblik.");
+      setError("Opkaldet kunne ikke afsluttes sikkert. Prøv igen om et øjeblik.");
       return;
     }
     const { error: logoutError } = await supabase.auth.signOut();
@@ -1428,10 +1433,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
               <span className="setup-icon"><Settings2 size={22} /></span>
               <span className="eyebrow">KOM GODT I GANG</span>
               <h1>Dit salgsteam.<br /><span>Ét bedre flow.</span></h1>
-              <p>Tilføj dine Supabase-oplysninger for at aktivere login og CRM. Appen forbinder sikkert fra serveren.</p>
-              <code>NEXT_PUBLIC_SUPABASE_URL<br />NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
-              <a className="button button-primary button-wide" href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">Åbn Supabase <ArrowUpRight size={16} /></a>
-              <p className="setup-foot">Kopiér <strong>.env.example</strong> til <strong>.env.local</strong>, anvend migrationen, og genstart udviklingsserveren.</p>
+              <p>Systemet er ved at blive sat op. Kontakt din administrator, hvis du ikke kan logge ind.</p>
             </div>
           ) : (
             <>
@@ -2090,7 +2092,7 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
                 <div className="callback-inline"><label>Planlæg callback<input aria-label="Callback dato og tid" type="datetime-local" value={callbackAt} onChange={(event) => setCallbackAt(event.target.value)} /></label><button disabled={busy || !callbackAt} onClick={() => onOutcome("callback")}>Gem callback</button></div>
               </div>
             </> : <div className="call-action-row">
-              <button className="call-button" disabled={callStartBusy || active} onClick={onCall}><span><PhoneCall size={20} /></span><strong>{callStartBusy ? "Forbinder headset …" : "Ring op"}</strong><small>{voiceState === "ready" ? "Headset forbundet via Telnyx" : "Sikker headsetforbindelse via Telnyx"}</small></button>
+              <button className="call-button" disabled={callStartBusy || active} onClick={onCall}><span><PhoneCall size={20} /></span><strong>{callStartBusy ? "Forbinder headset …" : "Ring op"}</strong><small>{voiceState === "ready" ? "Headset forbundet" : "Sikker headsetforbindelse"}</small></button>
               <button className="next-button" onClick={onNext}>Spring over <ArrowRight size={15} /></button>
             </div>}
           </div>
@@ -2149,7 +2151,7 @@ function DialpadView({ phone, setPhone, call, elapsed, callStarted, note, setNot
   const awaitingOutcome = Boolean(call && ["completed", "busy", "failed", "no_answer", "cancelled"].includes(call.status) && !call.outcome);
   const active = Boolean(call && (["queued", "initiated", "ringing", "answered"].includes(call.status) || awaitingOutcome));
   return <div className="view dialpad-view">
-    <div className="page-heading"><div><span className="eyebrow">RING TIL ET FRIT NUMMER</span><h1>Dialpad</h1><p>Indtast et nummer, og ring via din Telnyx-forbindelse.</p></div><span className="secure-tag"><CheckCircle2 size={14} /> Direkte opkald</span></div>
+    <div className="page-heading"><div><span className="eyebrow">RING TIL ET FRIT NUMMER</span><h1>Dialpad</h1><p>Indtast et nummer, og ring direkte fra din browser.</p></div><span className="secure-tag"><CheckCircle2 size={14} /> Direkte opkald</span></div>
     <div className="dialpad-layout">
       <section className="panel dialpad-panel">
         <div className="panel-heading"><div><span className="panel-eyebrow">TELEFONNUMMER</span><h2>Manuelt opkald</h2></div><PhoneCall size={17} className="heading-muted" /></div>
@@ -2166,9 +2168,9 @@ function DialpadView({ phone, setPhone, call, elapsed, callStarted, note, setNot
           <div className="dialpad-keys">{["1", "2", "3", "4", "5", "6", "7", "8", "9", "+", "0", "⌫"].map((digit) =>
             <button key={digit} aria-label={digit === "⌫" ? "Slet sidste ciffer" : `Indtast ${digit}`} onClick={() => setPhone(digit === "⌫" ? phone.slice(0, -1) : digit === "+" && phone.length ? phone : `${phone}${digit}`)}>{digit}</button>,
           )}</div>
-          <button className="button button-primary button-wide dialpad-call-button" disabled={!phone.trim() || busy} onClick={onCall}><PhoneCall size={17} /> {busy ? "Forbinder headset …" : "Ring op via Telnyx"}</button>
+          <button className="button button-primary button-wide dialpad-call-button" disabled={!phone.trim() || busy} onClick={onCall}><PhoneCall size={17} /> {busy ? "Forbinder headset …" : "Ring op"}</button>
         </>}
-        <p className="dialpad-disclaimer">Opkaldet går til et rigtigt telefonnummer og kan medføre Telnyx-forbrug.</p>
+        <p className="dialpad-disclaimer">Opkaldet går til et rigtigt telefonnummer.</p>
       </section>
       <aside className="panel dialpad-history"><div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Manuelle opkald</h2></div><Clock3 size={16} className="heading-muted" /></div>
         {history.length ? history.map((item) => <div className="recent-call" key={item.id}><span className="recent-call-icon"><Phone size={14} /></span><span><strong>{item.phone}</strong><small>{formatDate(item.started_at)} · {formatTime(item.started_at)}</small></span><span className="recent-duration">{formatDuration(item.duration_seconds)}</span></div>) : <EmptyInline title="Ingen manuelle opkald" description="Opkald fra Dialpad vises her." />}
@@ -2490,7 +2492,7 @@ function AdminTeamMember({ member, index, campaigns, leadLists, onSave }: {
         </label>) : <small>Leadlister vises, når de er oprettet.</small>}
       </fieldset>
     </div>
-    <label className="recording-permission"><input type="checkbox" checked={callRecordingEnabled} onChange={(event) => setCallRecordingEnabled(event.target.checked)} /> Optag denne brugers WebRTC-opkald</label>
+    <label className="recording-permission"><input type="checkbox" checked={callRecordingEnabled} onChange={(event) => setCallRecordingEnabled(event.target.checked)} /> Optag denne brugers opkald</label>
     <div className="admin-member-footer"><span>{campaignIds.length} kampagner · {leadListIds.length} leadlister tildelt</span>
       <button className="button button-secondary button-small" onClick={() => onSave(member.id, fullName, role, campaignIds, leadListIds, callRecordingEnabled)}>Gem ændringer</button>
     </div>
