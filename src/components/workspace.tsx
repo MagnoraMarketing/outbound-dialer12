@@ -5,12 +5,18 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
-  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Handshake, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
   Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  AdminFeedbackView, FeedbackBadge, MeetingFeedbackNote, SellerFeedbackPanel,
+  type AdminFeedbackMeeting, type MeetingFeedbackInfo,
+} from "@/components/meeting-feedback-views";
+import { PartnersView, type PartnerData } from "@/components/partners-view";
+import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
 type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
 type Lead = {
@@ -61,7 +67,11 @@ type LeadHistoryEntry = {
   body: string | null; duration_seconds: number | null; recording_url: string | null;
 };
 type Callback = { id: string; lead_id: string; callback_at: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
-type Meeting = { id: string; meeting_at: string; meeting_type: string; notes: string; leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> };
+type Meeting = {
+  id: string; user_id: string; meeting_at: string; meeting_type: string; notes: string; calendar_url: string | null;
+  leads?: Pick<Lead, "company_name" | "contact_person" | "phone"> | null;
+  has_customer: boolean; overdue: boolean; feedback: MeetingFeedbackInfo | null;
+};
 type TeamMember = {
   id: string; full_name: string; role: Profile["role"]; created_at: string; recordings_enabled: boolean; call_recording_enabled: boolean;
   campaign_ids?: string[]; lead_list_ids?: string[];
@@ -76,7 +86,7 @@ type AdminOverview = {
   totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
   campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
 };
-type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "messages" | "settings";
+type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -105,6 +115,8 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
   ] },
   { label: "ADMINISTRATION", items: [
     { id: "team", title: "Team", icon: Users },
+    { id: "partners", title: "Samarbejdspartnere", icon: Handshake },
+    { id: "feedback", title: "Mødefeedback", icon: ClipboardCheck },
     { id: "settings", title: "Indstillinger", icon: Settings2 },
   ] },
 ];
@@ -179,6 +191,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [calls, setCalls] = useState<Call[]>([]);
   const [callbacks, setCallbacks] = useState<Callback[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [adminFeedback, setAdminFeedback] = useState<AdminFeedbackMeeting[]>([]);
+  const [partnerData, setPartnerData] = useState<PartnerData>({ data: [], campaigns: [] });
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teamCampaigns, setTeamCampaigns] = useState<Campaign[]>([]);
   const [teamLeadLists, setTeamLeadLists] = useState<LeadList[]>([]);
@@ -245,10 +259,11 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     setLoading(true);
     try {
       if (activePage === "dashboard") {
-        const [result, budgets, messages, overview] = await Promise.all([
+        const [result, budgets, messages, meetingResult, overview] = await Promise.all([
           api<{ data: DashboardData }>("/api/dashboard"),
           api<BudgetReport>("/api/budgets"),
           api<{ data: TeamMessage[] }>("/api/messages"),
+          api<{ data: Meeting[] }>("/api/meetings"),
           profile?.role === "admin"
             ? api<{ data: AdminOverview }>("/api/admin/overview")
             : Promise.resolve(null),
@@ -256,6 +271,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         setDashboard(result.data);
         setBudgetReport(budgets);
         setTeamMessages(messages.data);
+        setMeetings(meetingResult.data);
         if (overview) setAdminOverview(overview.data);
       } else if (activePage === "budget") {
         setBudgetReport(await api<BudgetReport>("/api/budgets"));
@@ -288,6 +304,19 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       } else if (activePage === "meetings") {
         const result = await api<{ data: Meeting[] }>("/api/meetings");
         setMeetings(result.data);
+        // The page still shows the "Ny" markers from this load; they clear on the next one.
+        if (result.data.some((meeting) => meeting.feedback?.unseen)) {
+          void api("/api/meetings/feedback-seen", { method: "POST" }).catch(() => undefined);
+        }
+      } else if (activePage === "feedback") {
+        const [feedbackResult, campaignResult] = await Promise.all([
+          api<{ data: AdminFeedbackMeeting[] }>("/api/admin/meeting-feedback"),
+          api<{ data: Campaign[] }>("/api/campaigns"),
+        ]);
+        setAdminFeedback(feedbackResult.data);
+        setCampaigns(campaignResult.data);
+      } else if (activePage === "partners") {
+        setPartnerData(await api<PartnerData>("/api/admin/partners"));
       } else if (activePage === "history") {
         const result = await api<{ data: Call[] }>("/api/calls");
         setCalls(result.data);
@@ -419,6 +448,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       } else if (data) {
         setProfile(data as Profile);
       } else {
+        // Customer logins have no team profile; send them to their own portal.
+        const customerCheck = await fetch("/api/customer/me").catch(() => null);
+        if (!alive) return;
+        if (customerCheck?.ok) {
+          window.location.href = "/kunde";
+          return;
+        }
         setAuthError("Din konto er bekræftet, men Nordcall-profilen mangler. Opret en Nordcall-konto eller kontakt administratoren.");
       }
       setAuthLoading(false);
@@ -1298,6 +1334,18 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
+  // Dialogs show their own errors, so failures are rethrown after the toast.
+  async function partnerAction(url: string, method: string, body: unknown, success: string) {
+    try {
+      await api(url, { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+      setNotice(success);
+      void loadPageData("partners");
+    } catch (actionError) {
+      if (method === "DELETE" || method === "PATCH") setError(actionError instanceof Error ? actionError.message : "Handlingen mislykkedes.");
+      throw actionError;
+    }
+  }
+
   async function addMeeting(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1307,7 +1355,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         meeting_at: new Date(meetingDate).toISOString(),
         meeting_type: String(form.get("meeting_type") ?? "online"),
         notes: meetingNote,
-        calendar_url: String(form.get("calendar_url") ?? ""),
+        ...(profile?.role === "admin" ? { calendar_url: String(form.get("calendar_url") ?? "") } : {}),
       }) });
       setModal(null);
       setNotice("Mødet er booket.");
@@ -1417,12 +1465,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
     message.recipient_user_id === user.id && !message.read_at,
   ).length;
+  const unseenFeedback = meetings.filter((meeting) => meeting.feedback?.unseen).length;
 
   return (
     <div className="app-shell">
@@ -1439,13 +1488,15 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           {navGroups.map((group) => {
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
-              && (item.id !== "team" || profile.role === "admin"));
+              && (item.id !== "team" || profile.role === "admin")
+              && (!["partners", "feedback"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
               <button key={id} className={`nav-item ${page === id ? "nav-active" : ""}`} onClick={() => { setPage(id); setMobileNav(false); }}>
                 <Icon size={17} strokeWidth={1.8} /><span>{title}</span>
                 {id === "callbacks" && dashboard?.callbacks ? <span className="nav-count">{dashboard.callbacks}</span> : null}
+                {id === "meetings" && unseenFeedback ? <span className="nav-count nav-count-alert" aria-label={`${unseenFeedback} ny feedback`}>{unseenFeedback}</span> : null}
               </button>
             ))}
           </div> : null;
@@ -1467,8 +1518,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           <div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{pageTitle[page]}</strong></div>
           <div className="topbar-actions">
             <div className="global-search"><Search size={16} /><input value={search} onChange={(event) => { setSearch(event.target.value); setLeadsPage(0); }} placeholder="Søg virksomheder, kontakt …" /><kbd>⌘ K</kbd></div>
-            <button className="icon-button notification-button" aria-label={`Beskeder${unreadMessages ? `, ${unreadMessages} ulæste` : ""}`} onClick={() => setPage("messages")}>
-              <Bell size={17} />{unreadMessages > 0 && <i />}
+            <button className="icon-button notification-button" aria-label={unseenFeedback ? `${unseenFeedback} ny feedback på dine møder` : `Beskeder${unreadMessages ? `, ${unreadMessages} ulæste` : ""}`} onClick={() => setPage(unseenFeedback ? "meetings" : "messages")}>
+              <Bell size={17} />{(unreadMessages > 0 || unseenFeedback > 0) && <i />}
             </button>
             <div className="topbar-divider" />
             <div className="topbar-avatar">{initials(profile.full_name || user.email || "S")}</div>
@@ -1480,6 +1531,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
             budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
           />}
+          {page === "dashboard" && <SellerFeedbackPanel meetings={meetings.filter((meeting) => meeting.user_id === user.id)} onOpenMeetings={() => setPage("meetings")} />}
           {page === "dashboard" && profile.role === "admin" && adminOverview
             && <AdminCampaignOverview overview={adminOverview} onManageTeam={() => setPage("team")} />}
           {page === "budget" && <BudgetView
@@ -1546,6 +1598,16 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             campaigns={campaigns} leadLists={teamLeadLists}
             onSend={sendTeamMessage} onMarkRead={markMessageRead}
           />}
+          {page === "feedback" && profile.role === "admin" && <AdminFeedbackView
+            meetings={adminFeedback} campaigns={campaigns} loading={loading} onOpenPartners={() => setPage("partners")} />}
+          {page === "partners" && profile.role === "admin" && <PartnersView
+            partners={partnerData.data} campaigns={partnerData.campaigns} loading={loading}
+            onCreatePartner={(input) => partnerAction("/api/admin/partners", "POST", input, "Samarbejdspartneren er oprettet.")}
+            onUpdatePartner={(input) => partnerAction("/api/admin/partners", "PATCH", input, "Ændringerne er gemt.")}
+            onDeletePartner={(id) => partnerAction(`/api/admin/partners?id=${encodeURIComponent(id)}`, "DELETE", null, "Samarbejdspartneren er slettet.")}
+            onCreateLogin={(input) => partnerAction("/api/admin/partners/users", "POST", input, "Login er oprettet. Partneren logger ind på /kunde.")}
+            onDeleteLogin={(userId) => partnerAction(`/api/admin/partners/users?user_id=${encodeURIComponent(userId)}`, "DELETE", null, "Login er slettet.")}
+          />}
           {page === "settings" && <SettingsView user={user} profile={profile} />}
         </div>
       </main>
@@ -1588,7 +1650,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           <label>Virksomhed<select required value={meetingLeadId} onChange={(event) => setMeetingLeadId(event.target.value)}><option value="">Vælg virksomhed …</option>{leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.company_name}</option>)}</select></label>
           <label>Dato og tidspunkt<input required type="datetime-local" value={meetingDate} onChange={(event) => setMeetingDate(event.target.value)} /></label>
           <label>Mødetype<select name="meeting_type"><option value="online">Online</option><option value="in_person">Personligt møde</option><option value="phone">Telefon</option></select></label>
-          <label>Kalenderlink<input name="calendar_url" type="url" placeholder="https://…" /></label>
+          {profile?.role === "admin" && <label>Kalenderlink<input name="calendar_url" type="url" placeholder="https://…" /></label>}
           <label>Forberedelse / noter<textarea rows={3} value={meetingNote} onChange={(event) => setMeetingNote(event.target.value)} /></label>
           <ModalActions onCancel={() => setModal(null)} submit="Book møde" />
         </form>}
@@ -2121,13 +2183,24 @@ function CallbacksView({ callbacks, loading, onComplete, onSchedule }: { callbac
 }
 
 function MeetingsView({ meetings, loading, onBook }: { meetings: Meeting[]; loading: boolean; onBook: () => void }) {
+  const [stateFilter, setStateFilter] = useState<MeetingState | "all">("all");
+  const withCustomer = meetings.filter((meeting) => meeting.has_customer || meeting.feedback);
+  const states: MeetingState[] = ["good", "less_good", "not_qualified", "overdue", "awaiting", "upcoming"];
+  const visible = stateFilter === "all" ? meetings : meetings.filter((meeting) =>
+    (meeting.has_customer || meeting.feedback) && meetingState(meeting) === stateFilter);
   return <div className="view">
     <div className="page-heading"><div><span className="eyebrow">RELATIONER, DER RYKKER</span><h1>Møder</h1><p>Hold styr på de næste skridt med dine kunder.</p></div><button className="button button-primary" onClick={onBook}><Plus size={16} /> Book et møde</button></div>
-    <div className="meeting-grid">{meetings.map((meeting, index) => <article className="panel meeting-card" key={meeting.id}>
+    {withCustomer.length > 0 && <div className="fb-filter-row" role="group" aria-label="Filtrér på kundens status">
+      <button className={stateFilter === "all" ? "fb-filter-active" : ""} onClick={() => setStateFilter("all")}>Alle · {meetings.length}</button>
+      {states.map((state) => <button key={state} className={`fb-filter-${state} ${stateFilter === state ? "fb-filter-active" : ""}`} onClick={() => setStateFilter(state)}>
+        {meetingStateLabels[state]} · {withCustomer.filter((meeting) => meetingState(meeting) === state).length}
+      </button>)}
+    </div>}
+    <div className="meeting-grid">{visible.map((meeting, index) => <article className="panel meeting-card" key={meeting.id}>
       <div className={`meeting-date-chip meeting-chip-${index % 3}`}><strong>{new Date(meeting.meeting_at).toLocaleDateString("da-DK", { day: "2-digit" })}</strong><span>{new Date(meeting.meeting_at).toLocaleDateString("da-DK", { month: "short" })}</span></div>
-      <div className="meeting-card-body"><span className="eyebrow">{formatTime(meeting.meeting_at)} · {meeting.meeting_type === "online" ? "ONLINE" : meeting.meeting_type === "in_person" ? "PERSONLIGT" : "TELEFON"}</span><h2>{meeting.leads?.company_name || "Virksomhed"}</h2><p>{meeting.leads?.contact_person || meeting.leads?.phone || "Kontaktperson"}</p>{meeting.notes && <div className="meeting-notes">{meeting.notes}</div>}</div>
-      <span className="meeting-state"><span /> Planlagt</span>
-    </article>)}{!meetings.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dine møder lander her" description="Book et møde med et lead for at holde alle aftaler samlet." />}</div>}</div>
+      <div className="meeting-card-body"><span className="eyebrow">{formatTime(meeting.meeting_at)} · {meeting.meeting_type === "online" ? "ONLINE" : meeting.meeting_type === "in_person" ? "PERSONLIGT" : "TELEFON"}</span><h2>{meeting.leads?.company_name || "Virksomhed"}</h2><p>{meeting.leads?.contact_person || meeting.leads?.phone || "Kontaktperson"}</p>{meeting.notes && <div className="meeting-notes">{meeting.notes}</div>}<MeetingFeedbackNote feedback={meeting.feedback} /></div>
+      {meeting.has_customer || meeting.feedback ? <FeedbackBadge meeting={meeting} /> : <span className="meeting-state"><span /> Planlagt</span>}
+    </article>)}{!visible.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title={meetings.length ? "Ingen møder med denne status" : "Dine møder lander her"} description={meetings.length ? "Vælg et andet filter for at se flere møder." : "Book et møde med et lead for at holde alle aftaler samlet."} />}</div>}</div>
   </div>;
 }
 

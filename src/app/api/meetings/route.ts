@@ -1,17 +1,49 @@
 import { NextResponse } from "next/server";
-import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
+import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
+import { campaignsWithPartnerLogins, feedbackByMeeting, isFeedbackOverdue, type MeetingFeedback } from "@/lib/meeting-feedback";
 
 export async function GET() {
   const result = await requireContext();
   if ("response" in result) return result.response;
-  const { data, error } = await result.context.supabase.from("meetings")
-    .select("*, leads(id, company_name, contact_person, phone)")
+  const { context } = result;
+  const { data, error } = await context.supabase.from("meetings")
+    .select("*, leads(id, company_name, contact_person, phone, campaign_id)")
     .order("meeting_at", { ascending: true }).limit(300);
   if (error) {
     console.error("Meetings query failed", error.message);
     return apiError("Kunne ikke hente møder.", 500);
   }
-  return NextResponse.json({ data });
+  // Partner feedback lives behind the service role; without it, meetings still load.
+  let feedback = new Map<string, MeetingFeedback>();
+  let partnerCampaigns = new Set<string>();
+  try {
+    const admin = createSupabaseAdminClient();
+    [feedback, partnerCampaigns] = await Promise.all([
+      feedbackByMeeting(admin, context.profile.team_id, (data ?? []).map((meeting) => meeting.id as string)),
+      campaignsWithPartnerLogins(admin, context.profile.team_id),
+    ]);
+  } catch (feedbackError) {
+    console.error("Meeting feedback query failed", feedbackError);
+  }
+  const now = Date.now();
+  return NextResponse.json({
+    data: (data ?? []).map((meeting) => {
+      const rowFeedback = feedback.get(meeting.id) ?? null;
+      const campaignId = (meeting.leads as { campaign_id: string | null } | null)?.campaign_id ?? null;
+      const hasPartner = Boolean(campaignId && partnerCampaigns.has(campaignId));
+      return {
+        ...meeting,
+        has_customer: hasPartner,
+        feedback: rowFeedback && {
+          status: rowFeedback.status,
+          note: rowFeedback.note,
+          updated_at: rowFeedback.updated_at,
+          unseen: meeting.user_id === context.user.id && !rowFeedback.seller_seen_at,
+        },
+        overdue: hasPartner && isFeedbackOverdue(meeting.meeting_at, Boolean(rowFeedback), now),
+      };
+    }),
+  });
 }
 
 export async function POST(request: Request) {
@@ -29,7 +61,9 @@ export async function POST(request: Request) {
     meeting_at: new Date(body.meeting_at).toISOString(),
     meeting_type: typeof body.meeting_type === "string" ? body.meeting_type.slice(0, 50) : "online",
     notes: typeof body.notes === "string" ? body.notes.slice(0, 2000) : "",
-    calendar_url: typeof body.calendar_url === "string" ? body.calendar_url.slice(0, 2000) : null,
+    // Meeting links are managed by administrators only.
+    calendar_url: context.profile.role === "admin" && typeof body.calendar_url === "string" && body.calendar_url.trim()
+      ? body.calendar_url.trim().slice(0, 2000) : null,
   }).select().single();
   if (error) {
     console.error("Meeting creation failed", error.message);
