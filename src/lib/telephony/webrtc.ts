@@ -11,19 +11,14 @@ type TelnyxPayload = {
   jwt?: string;
 };
 
+// The caller number is chosen per call by the server (see resolveCallerNumber).
 function getTelnyxConfig() {
   const apiKey = process.env.TELNYX_API_KEY;
   const connectionId = process.env.TELNYX_WEBRTC_CONNECTION_ID;
-  const callerNumber = process.env.TELNYX_PHONE_NUMBER;
   if (!apiKey || !connectionId) {
     throw new Error("Telnyx WebRTC mangler TELNYX_API_KEY eller TELNYX_WEBRTC_CONNECTION_ID.");
   }
-  if (!callerNumber) throw new Error("Tilføj TELNYX_PHONE_NUMBER i Vercel, før du starter opkald.");
-  const normalizedCallerNumber = callerNumber.trim().replace(/[\s().-]/g, "");
-  if (!/^\+[1-9]\d{7,14}$/.test(normalizedCallerNumber)) {
-    throw new Error("TELNYX_PHONE_NUMBER skal være et gyldigt nummer i internationalt format.");
-  }
-  return { apiKey, connectionId, callerNumber: normalizedCallerNumber };
+  return { apiKey, connectionId };
 }
 
 async function telnyxRequest(path: string, apiKey: string, body?: Record<string, string>) {
@@ -91,7 +86,7 @@ async function getOrCreateCredential(userId: string, teamId: string) {
 }
 
 export async function createWebRtcToken(userId: string, teamId: string) {
-  const { apiKey, callerNumber } = getTelnyxConfig();
+  const { apiKey } = getTelnyxConfig();
   const credentialId = await getOrCreateCredential(userId, teamId);
   const payload = await telnyxRequest(
     `/telephony_credentials/${encodeURIComponent(credentialId)}/token`,
@@ -106,5 +101,5 @@ export async function createWebRtcToken(userId: string, teamId: string) {
     console.error("Telnyx token response did not include a JWT");
     throw new Error("Telnyx returnerede ikke et gyldigt login-token.");
   }
-  return { token, callerNumber };
+  return { token };
 }

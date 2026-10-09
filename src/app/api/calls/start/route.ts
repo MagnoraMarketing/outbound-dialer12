@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
 import { normalizePhone } from "@/lib/leads";
+import { resolveCallerNumber } from "@/lib/telephony/numbers";
 
 export async function POST(request: Request) {
   const result = await requireContext();
@@ -8,10 +9,10 @@ export async function POST(request: Request) {
   const body = await readJson(request);
   if (!body || (typeof body.lead_id !== "string" && typeof body.phone !== "string")) return apiError("Vælg en virksomhed eller indtast et telefonnummer.");
   const { context } = result;
-  let lead: { id: string; phone: string; status: string; assigned_user_id: string | null; next_follow_up_at: string | null } | null = null;
+  let lead: { id: string; phone: string; status: string; assigned_user_id: string | null; next_follow_up_at: string | null; campaign_id: string | null } | null = null;
   if (typeof body.lead_id === "string") {
     const { data, error: leadError } = await context.supabase.from("leads")
-      .select("id, phone, status, assigned_user_id, next_follow_up_at")
+      .select("id, phone, status, assigned_user_id, next_follow_up_at, campaign_id")
       .eq("id", body.lead_id).is("deleted_at", null).maybeSingle();
     if (leadError || !data) return apiError("Virksomheden blev ikke fundet.", leadError ? 500 : 404);
     lead = data;
@@ -39,6 +40,19 @@ export async function POST(request: Request) {
     console.error("Call creation is not configured", error);
     return apiError("Opkaldsoprettelse er ikke konfigureret.", 503);
   }
+  // Administrators assign caller numbers; sellers never pick one.
+  let callerNumber: string | null;
+  try {
+    callerNumber = await resolveCallerNumber(admin, context.profile.team_id, lead?.campaign_id ?? null);
+  } catch (error) {
+    console.error("Caller number lookup failed", error);
+    return apiError("Opkaldet kunne ikke forberedes. Prøv igen.", 500);
+  }
+  if (!callerNumber) {
+    return apiError(context.profile.role === "admin"
+      ? "Der er intet udgående nummer. Tildel et nummer til kampagnen eller vælg et standardnummer under Telefonnumre."
+      : "Der er ikke tildelt et udgående nummer til denne kampagne. Kontakt din administrator.", 409);
+  }
   const { data: call, error: insertError } = await admin.from("calls").insert({
     team_id: context.profile.team_id,
     lead_id: lead?.id ?? null,
@@ -46,6 +60,7 @@ export async function POST(request: Request) {
     phone,
     status: "queued",
     recording_enabled: context.profile.call_recording_enabled,
+    caller_number: callerNumber,
   }).select().single();
   if (insertError || !call) {
     console.error("Call record creation failed", insertError?.message);

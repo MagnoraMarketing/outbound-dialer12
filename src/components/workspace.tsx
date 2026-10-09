@@ -5,7 +5,7 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
-  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
+  CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, PhoneForwarded, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
   Target, Timer, Trash2, Users, X,
@@ -18,6 +18,7 @@ import {
 import { PartnersView, type PartnerData } from "@/components/partners-view";
 import { MagnoraEmpire } from "@/components/game/magnora-empire";
 import { EarningsApprovals } from "@/components/earnings-approvals";
+import { PhoneNumbersView } from "@/components/phone-numbers-view";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
 type Profile = { id: string; team_id: string | null; full_name: string; role: "admin" | "manager" | "salesperson"; recordings_enabled: boolean; call_recording_enabled: boolean };
@@ -61,7 +62,7 @@ type TeamMessage = {
   campaign_id: string | null; lead_list_id: string | null;
   title: string; body: string; created_at: string; read_at: string | null; recipient_count?: number;
 };
-type Call = { id: string; lead_id: string | null; phone: string; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; recording_url?: string | null; leads?: { company_name: string; contact_person: string | null } | null };
+type Call = { id: string; lead_id: string | null; phone: string; caller_number?: string | null; started_at: string; duration_seconds: number; status: string; outcome: string | null; notes: string; recording_url?: string | null; leads?: { company_name: string; contact_person: string | null } | null };
 type TelnyxClient = InstanceType<typeof import("@telnyx/webrtc").TelnyxRTC>;
 type TelnyxCall = import("@telnyx/webrtc").Call;
 type LeadHistoryEntry = {
@@ -88,7 +89,7 @@ type AdminOverview = {
   totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
   campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
 };
-type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "game" | "messages" | "settings";
+type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "numbers" | "game" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -120,6 +121,7 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "partners", title: "Samarbejdspartnere", icon: Handshake },
     { id: "feedback", title: "Mødefeedback", icon: ClipboardCheck },
     { id: "earnings", title: "Godkend indtjening", icon: BadgeCheck },
+    { id: "numbers", title: "Telefonnumre", icon: PhoneForwarded },
     { id: "settings", title: "Indstillinger", icon: Settings2 },
   ] },
   { label: "MAGNORA EMPIRE", items: [
@@ -252,7 +254,6 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const voiceConnectionPromiseRef = useRef<Promise<TelnyxClient> | null>(null);
   const telnyxCallRef = useRef<TelnyxCall | null>(null);
   const callRecordIdRef = useRef<string | null>(null);
-  const callerNumberRef = useRef<string | null>(null);
   const callRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingCallIdRef = useRef<string | null>(null);
@@ -518,8 +519,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         }
         voiceClientRef.current = null;
       }
-      const { data: credentials } = await api<{ data: { token: string; callerNumber: string } }>("/api/calls/webrtc-token", { method: "POST" });
-      callerNumberRef.current = credentials.callerNumber;
+      const { data: credentials } = await api<{ data: { token: string } }>("/api/calls/webrtc-token", { method: "POST" });
       const { TelnyxRTC } = await import("@telnyx/webrtc");
       const client = new TelnyxRTC({ login_token: credentials.token, hangupOnBeforeUnload: true });
       let ready = false;
@@ -709,10 +709,11 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       setCallStarted(Date.now());
       setElapsed(0);
       if (!client.connected) throw new Error("Telefonforbindelsen blev afbrudt. Prøv at ringe igen.");
-      if (!callerNumberRef.current) throw new Error("Der er ikke tildelt et udgående nummer. Kontakt din administrator.");
+      // The server picks the caller number from the campaign or team default.
+      if (!result.data.caller_number) throw new Error("Der er ikke tildelt et udgående nummer. Kontakt din administrator.");
       telnyxCallRef.current = client.newCall({
         destinationNumber: result.data.phone,
-        callerNumber: callerNumberRef.current,
+        callerNumber: result.data.caller_number,
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         localStream: stream,
         ...(remoteAudioRef.current ? { remoteElement: remoteAudioRef.current } : {}),
@@ -1473,7 +1474,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", game: "Magnora Empire",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Magnora Empire",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
@@ -1497,7 +1498,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
               && (item.id !== "team" || profile.role === "admin")
-              && (!["partners", "feedback", "earnings"].includes(item.id) || profile.role === "admin"));
+              && (!["partners", "feedback", "earnings", "numbers"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
@@ -1617,6 +1618,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             onDeleteLogin={(userId) => partnerAction(`/api/admin/partners/users?user_id=${encodeURIComponent(userId)}`, "DELETE", null, "Login er slettet.")}
           />}
           {page === "earnings" && profile.role === "admin" && <EarningsApprovals />}
+          {page === "numbers" && profile.role === "admin" && <PhoneNumbersView />}
           {page === "game" && <MagnoraEmpire />}
           {page === "settings" && <SettingsView user={user} profile={profile} onChangePassword={async (password) => {
             if (!supabase) throw new Error("Login er ikke konfigureret.");
