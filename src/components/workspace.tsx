@@ -57,6 +57,7 @@ type BudgetReport = {
   members: { id: string; full_name: string; role: Profile["role"] }[];
   campaigns: { id: string; name: string }[];
   activities: BudgetActivity[];
+  system_fee?: { fee_dkk: number; users: Record<string, { gross: number; covered: number; own: number }> };
 };
 type TeamMessage = {
   id: string; broadcast_id: string; recipient_user_id: string; sent_by: string;
@@ -1792,6 +1793,28 @@ function AdminCampaignOverview({ overview, onManageTeam }: {
   </section>;
 }
 
+// Every seller covers the system with the first part of each month's commission; the rest is their own.
+function SystemFeeCard({ fee, split, own }: { fee: number; split?: { gross: number; covered: number; own: number }; own: boolean }) {
+  const gross = split?.gross ?? 0;
+  const covered = split?.covered ?? 0;
+  const earned = split?.own ?? 0;
+  const percent = fee > 0 ? Math.min(100, Math.round(covered / fee * 100)) : 100;
+  const done = covered >= fee;
+  return <section className="panel system-fee-card">
+    <div className="system-fee-head">
+      <div><span className="panel-eyebrow">SYSTEMDÆKNING · DENNE MÅNED</span>
+        <h2>{done ? (own ? "Systemet er dækket – resten er din indtjening" : "Systemet er dækket") : `${formatMoney(fee - covered)} mangler før ${own ? "din" : "egen"} indtjening starter`}</h2>
+        <p>De første {formatMoney(fee)} af {own ? "din" : "sælgerens"} provision hver måned dækker systemet. Alt derover er {own ? "din egen" : "sælgerens egen"} indtjening.</p></div>
+    </div>
+    <div className="budget-progress-track"><i style={{ width: `${percent}%` }} /></div>
+    <div className="system-fee-figures">
+      <span><small>Provision i alt</small><strong>{formatMoney(gross)}</strong></span>
+      <span><small>Systemdækning</small><strong>{formatMoney(covered)} / {formatMoney(fee)}</strong></span>
+      <span className="system-fee-own"><small>{own ? "Din indtjening" : "Sælgerens indtjening"}</small><strong>{formatMoney(earned)}</strong></span>
+    </div>
+  </section>;
+}
+
 function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
   report: BudgetReport | null; loading: boolean; userId: string; role: Profile["role"];
   onSave: (userId: string, campaignId: string, settings: CampaignBudgetSettings) => void;
@@ -1864,6 +1887,7 @@ function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
           </div>
         </form>
       </section>
+      <SystemFeeCard fee={report?.system_fee?.fee_dkk ?? 500} split={report?.system_fee?.users[selectedUserId]} own={selectedUserId === userId} />
       {target ? <section className="budget-results">
         <div className="budget-results-heading"><div><span className="panel-eyebrow">{userName} · {target.campaign_name || "Kampagne"}</span><h2>Din fremgang</h2></div><span className="live-tag"><i /> Opdateret live</span></div>
         <div className="budget-kpi-grid">
