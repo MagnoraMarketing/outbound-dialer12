@@ -10,6 +10,10 @@ export async function POST() {
     return NextResponse.json({ data });
   } catch (error) {
     console.error("Could not issue Telnyx WebRTC token", error);
-    return apiError(error instanceof Error ? error.message : "Telnyx-forbindelsen kunne ikke klargøres.", 503);
+    // Setup details are for administrators only; sellers never see provider names.
+    const detail = error instanceof Error ? error.message : "";
+    return apiError(result.context.profile.role === "admin" && detail
+      ? `Telefonien er ikke sat korrekt op: ${detail}`
+      : "Opkald er ikke klar lige nu. Kontakt din administrator.", 503);
   }
 }

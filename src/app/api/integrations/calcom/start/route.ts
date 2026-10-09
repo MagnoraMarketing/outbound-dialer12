@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const clientId = process.env.CAL_OAUTH_CLIENT_ID;
   if (!clientId || !process.env.CAL_OAUTH_CLIENT_SECRET || !process.env.CAL_OAUTH_TOKEN_ENCRYPTION_KEY) {
     return NextResponse.json({
-      error: "Cal.com-forbindelsen er ikke konfigureret. Tilføj OAuth-klientens servernøgler i Vercel.",
+      error: "Kalenderforbindelsen er ikke sat op. Kontakt din administrator.",
     }, { status: 503 });
   }
   const state = randomBytes(32).toString("base64url");

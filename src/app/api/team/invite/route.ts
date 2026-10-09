@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     });
     if (error || !data.user) {
       console.error("Team invitation failed", error?.message);
-      return apiError("Invitationen kunne ikke sendes. Kontrollér Supabase e-mailopsætningen.", 502);
+      return apiError("Invitationen kunne ikke sendes. Kontrollér e-mailopsætningen.", 502);
     }
     const { data: profile, error: profileError } = await admin.from("profiles").update({
       full_name: fullName,

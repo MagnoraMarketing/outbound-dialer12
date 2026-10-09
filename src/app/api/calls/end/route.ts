@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       await telephonyProvider.endCall(call.telnyx_call_id);
     } catch (hangupError) {
       console.error("Unable to hang up Telnyx call", hangupError);
-      return apiError(hangupError instanceof Error ? hangupError.message : "Opkaldet kunne ikke afsluttes.", 502);
+      return apiError("Opkaldet kunne ikke afsluttes. Prøv igen om et øjeblik.", 502);
     }
   }
 
