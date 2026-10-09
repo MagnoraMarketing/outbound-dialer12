@@ -65,6 +65,13 @@ export async function POST(request: Request) {
     if (error) return apiError("Listens brugere kunne ikke hentes.", 500);
     recipientIds = (data ?? []).map((assignment) => assignment.user_id);
   }
+  if (scope !== "team") {
+    // Sellers with access to all campaigns are part of every campaign and list audience.
+    const { data, error } = await context.supabase.from("profiles").select("id")
+      .eq("team_id", context.profile.team_id).eq("access_mode", "all").neq("role", "admin");
+    if (error) return apiError("Målgruppens brugere kunne ikke hentes.", 500);
+    recipientIds.push(...(data ?? []).map((profile) => profile.id));
+  }
   recipientIds = [...new Set(recipientIds)].filter((id) => id !== context.user.id);
   if (!recipientIds.length) return apiError("Der er ingen andre teammedlemmer tildelt denne målgruppe.", 409);
   const broadcastId = crypto.randomUUID();

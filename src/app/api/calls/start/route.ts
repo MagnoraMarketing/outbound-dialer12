@@ -24,6 +24,9 @@ export async function POST(request: Request) {
       return apiError("Virksomheden har en fremtidig aftalt opringning.", 409);
     }
   }
+  if (!lead && context.profile.role !== "admin" && context.profile.can_dial_manual === false) {
+    return apiError("Du har ikke adgang til at ringe til frie numre. Kontakt din administrator.", 403);
+  }
   const phone = normalizePhone(lead?.phone ?? body.phone);
   if (!phone) return apiError("Telefonnummeret er ugyldigt.", 422);
 
