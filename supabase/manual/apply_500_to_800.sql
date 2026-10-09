@@ -1,8 +1,8 @@
--- Kører de manglende Nordcall-migrations 400 (hvis den mangler), 500, 600, 700 og 800 samlet i én transaktion.
--- Hvis noget fejler, rulles det hele tilbage, og intet ændres.
+-- Nordcall-migrations 400-800 i en version, der kan køres flere gange.
+-- Alt der allerede findes, springes over. Kører i én transaktion.
 begin;
 
--- ===== 20261005040000_campaign_leads.sql (kun hvis den ikke allerede er kørt) =====
+-- ===== 400 (kun hvis den mangler) =====
 do $outer$ begin
   if not exists (select 1 from information_schema.columns where table_schema='nordcall' and table_name='leads' and column_name='campaign_id') then
     execute $m400$
@@ -106,14 +106,15 @@ as $$
       )
   )
 $$;
+
 $m400$;
   end if;
 end $outer$;
 
 -- ===== 20261005050000_budgets_and_team_messages.sql =====
-create unique index profiles_id_team_unique_idx on nordcall.profiles (id, team_id);
+create unique index if not exists profiles_id_team_unique_idx on nordcall.profiles (id, team_id);
 
-create table nordcall.sales_targets (
+create table if not exists nordcall.sales_targets (
   id uuid primary key default gen_random_uuid(),
   team_id uuid not null references nordcall.teams(id) on delete cascade,
   user_id uuid not null references nordcall.profiles(id) on delete cascade,
@@ -126,13 +127,13 @@ create table nordcall.sales_targets (
     references nordcall.profiles(id, team_id) on delete cascade
 );
 
-create unique index sales_targets_team_user_all_idx
+create unique index if not exists sales_targets_team_user_all_idx
   on nordcall.sales_targets (team_id, user_id) where campaign_id is null;
-create unique index sales_targets_team_user_campaign_idx
+create unique index if not exists sales_targets_team_user_campaign_idx
   on nordcall.sales_targets (team_id, user_id, campaign_id) where campaign_id is not null;
-create index sales_targets_user_idx on nordcall.sales_targets (team_id, user_id);
+create index if not exists sales_targets_user_idx on nordcall.sales_targets (team_id, user_id);
 
-create table nordcall.team_messages (
+create table if not exists nordcall.team_messages (
   id uuid primary key default gen_random_uuid(),
   broadcast_id uuid not null,
   team_id uuid not null references nordcall.teams(id) on delete cascade,
@@ -148,8 +149,8 @@ create table nordcall.team_messages (
     references nordcall.profiles(id, team_id) on delete cascade
 );
 
-create index team_messages_broadcast_idx on nordcall.team_messages (team_id, broadcast_id);
-create index team_messages_inbox_idx on nordcall.team_messages (team_id, recipient_user_id, created_at desc);
+create index if not exists team_messages_broadcast_idx on nordcall.team_messages (team_id, broadcast_id);
+create index if not exists team_messages_inbox_idx on nordcall.team_messages (team_id, recipient_user_id, created_at desc);
 
 alter table nordcall.sales_targets enable row level security;
 alter table nordcall.team_messages enable row level security;
@@ -159,6 +160,7 @@ grant select, insert on nordcall.team_messages to authenticated;
 grant update (read_at) on nordcall.team_messages to authenticated;
 grant all on nordcall.sales_targets, nordcall.team_messages to service_role;
 
+drop policy if exists "Users and admins can read sales targets" on nordcall.sales_targets;
 create policy "Users and admins can read sales targets"
   on nordcall.sales_targets for select
   using (
@@ -169,6 +171,7 @@ create policy "Users and admins can read sales targets"
     )
   );
 
+drop policy if exists "Users and admins can create sales targets" on nordcall.sales_targets;
 create policy "Users and admins can create sales targets"
   on nordcall.sales_targets for insert
   with check (
@@ -195,6 +198,7 @@ create policy "Users and admins can create sales targets"
     )
   );
 
+drop policy if exists "Users and admins can update sales targets" on nordcall.sales_targets;
 create policy "Users and admins can update sales targets"
   on nordcall.sales_targets for update
   using (
@@ -225,6 +229,7 @@ create policy "Users and admins can update sales targets"
     )
   );
 
+drop policy if exists "Recipients and admins can read team messages" on nordcall.team_messages;
 create policy "Recipients and admins can read team messages"
   on nordcall.team_messages for select
   using (
@@ -235,6 +240,7 @@ create policy "Recipients and admins can read team messages"
     )
   );
 
+drop policy if exists "Admins can send team messages" on nordcall.team_messages;
 create policy "Admins can send team messages"
   on nordcall.team_messages for insert
   with check (
@@ -257,6 +263,7 @@ create policy "Admins can send team messages"
     ))
   );
 
+drop policy if exists "Recipients can mark messages read" on nordcall.team_messages;
 create policy "Recipients can mark messages read"
   on nordcall.team_messages for update
   using (
@@ -271,15 +278,15 @@ create policy "Recipients can mark messages read"
 
 -- ===== 20261005060000_budget_activities_and_calcom.sql =====
 alter table nordcall.sales_targets
-  add column activity_mode text not null default 'meeting'
+  add column if not exists activity_mode text not null default 'meeting'
     check (activity_mode in ('meeting', 'sale', 'both')),
-  add column commission_per_meeting numeric(12, 2) not null default 0
+  add column if not exists commission_per_meeting numeric(12, 2) not null default 0
     check (commission_per_meeting between 0 and 1000000),
-  add column commission_per_sale numeric(12, 2) not null default 0
+  add column if not exists commission_per_sale numeric(12, 2) not null default 0
     check (commission_per_sale between 0 and 1000000),
-  add column weekly_meeting_target integer not null default 0
+  add column if not exists weekly_meeting_target integer not null default 0
     check (weekly_meeting_target between 0 and 10000),
-  add column weekly_sale_target integer not null default 0
+  add column if not exists weekly_sale_target integer not null default 0
     check (weekly_sale_target between 0 and 10000);
 
 update nordcall.sales_targets
@@ -287,10 +294,10 @@ set weekly_meeting_target = weekly_target
 where campaign_id is not null;
 
 alter table nordcall.profiles
-  add column recordings_enabled boolean not null default true;
+  add column if not exists recordings_enabled boolean not null default true;
 grant update (recordings_enabled) on nordcall.profiles to authenticated;
 
-create table nordcall.budget_events (
+create table if not exists nordcall.budget_events (
   id uuid primary key default gen_random_uuid(),
   team_id uuid not null references nordcall.teams(id) on delete cascade,
   user_id uuid not null references nordcall.profiles(id) on delete cascade,
@@ -302,15 +309,16 @@ create table nordcall.budget_events (
     references nordcall.profiles(id, team_id) on delete cascade
 );
 
-create index budget_events_team_user_date_idx
+create index if not exists budget_events_team_user_date_idx
   on nordcall.budget_events (team_id, user_id, created_at desc);
-create index budget_events_campaign_date_idx
+create index if not exists budget_events_campaign_date_idx
   on nordcall.budget_events (team_id, campaign_id, created_at desc);
 
 alter table nordcall.budget_events enable row level security;
 grant select, insert on nordcall.budget_events to authenticated;
 grant all on nordcall.budget_events to service_role;
 
+drop policy if exists "Users and managers can read budget events" on nordcall.budget_events;
 create policy "Users and managers can read budget events"
   on nordcall.budget_events for select
   using (
@@ -321,6 +329,7 @@ create policy "Users and managers can read budget events"
     )
   );
 
+drop policy if exists "Users can record their own budget events" on nordcall.budget_events;
 create policy "Users can record their own budget events"
   on nordcall.budget_events for insert
   with check (
@@ -362,6 +371,7 @@ begin
 end;
 $$;
 
+drop trigger if exists nordcall_record_meeting_budget_event on nordcall.meetings;
 create trigger nordcall_record_meeting_budget_event
   after insert on nordcall.meetings
   for each row execute function nordcall.record_meeting_budget_event();
@@ -373,7 +383,7 @@ join nordcall.leads l on l.id = m.lead_id
 where l.campaign_id is not null
 on conflict (source_meeting_id) do nothing;
 
-create table nordcall.calcom_connections (
+create table if not exists nordcall.calcom_connections (
   user_id uuid primary key references nordcall.profiles(id) on delete cascade,
   team_id uuid not null references nordcall.teams(id) on delete cascade,
   encrypted_access_token text not null,
@@ -390,7 +400,7 @@ grant all on nordcall.calcom_connections to service_role;
 
 
 -- ===== 20261005070000_telnyx_webrtc_credentials.sql =====
-create table nordcall.telnyx_webrtc_credentials (
+create table if not exists nordcall.telnyx_webrtc_credentials (
   user_id uuid primary key references nordcall.profiles(id) on delete cascade,
   team_id uuid not null references nordcall.teams(id) on delete cascade,
   credential_id text not null unique,
@@ -411,10 +421,10 @@ set role = 'salesperson'
 where role = 'manager';
 
 alter table nordcall.profiles
-  add column call_recording_enabled boolean not null default false;
+  add column if not exists call_recording_enabled boolean not null default false;
 
 alter table nordcall.calls
-  add column recording_enabled boolean not null default false;
+  add column if not exists recording_enabled boolean not null default false;
 
 revoke insert, update on nordcall.calls from authenticated;
 grant update (status, outcome, notes, ended_at, duration_seconds) on nordcall.calls to authenticated;
@@ -431,6 +441,7 @@ on conflict (id) do update
 set public = false,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
+
 
 commit;
 
