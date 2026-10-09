@@ -1,12 +1,114 @@
--- Kører de manglende Nordcall-migrations 500, 600, 700 og 800 samlet i én transaktion.
+-- Kører de manglende Nordcall-migrations 400 (hvis den mangler), 500, 600, 700 og 800 samlet i én transaktion.
 -- Hvis noget fejler, rulles det hele tilbage, og intet ændres.
 begin;
 
-do $$ begin
+-- ===== 20261005040000_campaign_leads.sql (kun hvis den ikke allerede er kørt) =====
+do $outer$ begin
   if not exists (select 1 from information_schema.columns where table_schema='nordcall' and table_name='leads' and column_name='campaign_id') then
-    raise exception 'Migration 400 (20261005040000_campaign_leads.sql) mangler. Kør den først.';
+    execute $m400$
+alter table nordcall.leads
+  add column campaign_id uuid references nordcall.campaigns(id) on delete set null;
+
+update nordcall.leads l
+set campaign_id = ll.campaign_id
+from nordcall.lead_lists ll
+where l.lead_list_id = ll.id
+  and l.campaign_id is null;
+
+create index leads_campaign_status_idx on nordcall.leads (campaign_id, status) where deleted_at is null;
+
+drop policy "Create leads for own team" on nordcall.leads;
+create policy "Create leads for own team" on nordcall.leads for insert
+  with check (
+    team_id = (select nordcall.current_user_team_id())
+    and created_by = (select auth.uid())
+    and (assigned_user_id = (select auth.uid()) or nordcall.current_user_role() in ('admin', 'manager'))
+    and (assigned_user_id is null or exists (
+      select 1 from nordcall.profiles assigned_profile
+      where assigned_profile.id = leads.assigned_user_id and assigned_profile.team_id = leads.team_id
+    ))
+    and (campaign_id is null or exists (
+      select 1 from nordcall.campaigns c
+      where c.id = leads.campaign_id and c.team_id = leads.team_id
+    ))
+    and (lead_list_id is null or exists (
+      select 1 from nordcall.lead_lists ll
+      where ll.id = leads.lead_list_id
+        and ll.team_id = leads.team_id
+        and ll.campaign_id = leads.campaign_id
+    ))
+  );
+
+drop policy "Update leads by assignment or team role" on nordcall.leads;
+create policy "Update leads by assignment or team role" on nordcall.leads for update
+  using (nordcall.can_access_lead(id))
+  with check (
+    team_id = (select nordcall.current_user_team_id())
+    and (
+      nordcall.current_user_role() in ('admin', 'manager')
+      or assigned_user_id = (select auth.uid())
+      or exists (
+        select 1 from nordcall.lead_list_assignments a
+        where a.team_id = leads.team_id
+          and a.lead_list_id = leads.lead_list_id
+          and a.user_id = (select auth.uid())
+      )
+      or exists (
+        select 1 from nordcall.campaign_assignments a
+        where a.team_id = leads.team_id
+          and a.campaign_id = leads.campaign_id
+          and a.user_id = (select auth.uid())
+      )
+    )
+    and (assigned_user_id is null or exists (
+      select 1 from nordcall.profiles assigned_profile
+      where assigned_profile.id = leads.assigned_user_id and assigned_profile.team_id = leads.team_id
+    ))
+    and (campaign_id is null or exists (
+      select 1 from nordcall.campaigns c
+      where c.id = leads.campaign_id and c.team_id = leads.team_id
+    ))
+    and (lead_list_id is null or exists (
+      select 1 from nordcall.lead_lists ll
+      where ll.id = leads.lead_list_id
+        and ll.team_id = leads.team_id
+        and ll.campaign_id = leads.campaign_id
+    ))
+  );
+
+create or replace function nordcall.can_access_lead(target_lead uuid)
+returns boolean
+language sql stable security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from nordcall.leads l
+    join nordcall.profiles p on p.id = (select auth.uid())
+    where l.id = target_lead
+      and l.deleted_at is null
+      and l.team_id = p.team_id
+      and (
+        p.role in ('admin', 'manager')
+        or l.assigned_user_id = p.id
+        or exists (
+          select 1 from nordcall.lead_list_assignments a
+          where a.team_id = l.team_id
+            and a.lead_list_id = l.lead_list_id
+            and a.user_id = p.id
+        )
+        or exists (
+          select 1 from nordcall.campaign_assignments a
+          where a.team_id = l.team_id
+            and a.campaign_id = l.campaign_id
+            and a.user_id = p.id
+        )
+      )
+  )
+$$;
+$m400$;
   end if;
-end $$;
+end $outer$;
 
 -- ===== 20261005050000_budgets_and_team_messages.sql =====
 create unique index profiles_id_team_unique_idx on nordcall.profiles (id, team_id);
@@ -331,3 +433,5 @@ set public = false,
     allowed_mime_types = excluded.allowed_mime_types;
 
 commit;
+
+notify pgrst, 'reload schema';
