@@ -1155,3 +1155,18 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .pn-warning { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; padding: 14px 16px; border-color: #f1dfae; color: #8a5a0b; background: #fffaf0; }
 .pn-warning p { margin: 0; font-size: 12px; }
 @media (max-width: 900px) { .pn-grid { grid-template-columns: 1fr; } .pn-manual { grid-template-columns: 1fr; } .pn-campaigns select { min-width: 0; width: 100%; } }
+
+/* Monthly system coverage per seller */
+.system-fee-card { padding: 20px 22px; margin-bottom: 16px; display: grid; gap: 14px; }
+.system-fee-head h2 { margin: 4px 0 6px; font-size: 17px; color: var(--ink); }
+.system-fee-head p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+.system-fee-figures { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.system-fee-figures span { display: grid; gap: 2px; }
+.system-fee-figures small { color: var(--muted); font-size: 12px; }
+.system-fee-figures strong { color: var(--ink); font-size: 16px; }
+.system-fee-own strong { color: var(--green); }
+.ea-fee { display: grid; gap: 14px; }
+.ea-fee-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.ea-fee-form label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-soft); }
+.ea-fee-form input { width: 140px; }
+@media (max-width: 640px) { .system-fee-figures { grid-template-columns: 1fr; } }

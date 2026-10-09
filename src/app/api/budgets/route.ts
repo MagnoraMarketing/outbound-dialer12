@@ -1,46 +1,14 @@
 import { NextResponse } from "next/server";
 import { apiError, createSupabaseAdminClient, readJson, requireContext, writeAudit } from "@/lib/http";
-
-function copenhagenToday() {
-  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Europe/Copenhagen" }).format(new Date());
-}
-
-function dateKey(date: Date) {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-}
-
-function copenhagenMidnightUtc(date: string) {
-  const midnight = new Date(`${date}T00:00:00.000Z`);
-  const offsetLabel = new Intl.DateTimeFormat("en", {
-    timeZone: "Europe/Copenhagen", timeZoneName: "shortOffset",
-  }).formatToParts(midnight).find((part) => part.type === "timeZoneName")?.value ?? "GMT+0";
-  const match = offsetLabel.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/);
-  const offset = match
-    ? (Number(match[2]) * 60 + Number(match[3] ?? 0)) * (match[1] === "-" ? -1 : 1)
-    : 0;
-  return new Date(midnight.getTime() - offset * 60_000);
-}
-
-function periodBoundaries() {
-  const today = copenhagenToday();
-  const todayDate = new Date(`${today}T00:00:00.000Z`);
-  const monday = new Date(todayDate);
-  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
-  const monthStart = `${today.slice(0, 7)}-01`;
-  return {
-    weekStart: copenhagenMidnightUtc(dateKey(monday)),
-    nextWeek: copenhagenMidnightUtc(dateKey(new Date(monday.getTime() + 7 * 86400_000))),
-    monthStart: copenhagenMidnightUtc(monthStart),
-    nextMonth: copenhagenMidnightUtc(dateKey(new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 1)))),
-  };
-}
+import { periodBoundaries } from "@/lib/copenhagen-time";
+import { DEFAULT_SYSTEM_FEE_DKK, splitEarnings, type SystemFeeSplit } from "@/lib/system-fee";
 
 export async function GET() {
   const result = await requireContext();
   if ("response" in result) return result.response;
   const { context } = result;
   const bounds = periodBoundaries();
-  const [targets, meetings, profiles, campaigns] = await Promise.all([
+  const [targets, meetings, profiles, campaigns, team] = await Promise.all([
     context.supabase.from("sales_targets")
       .select("id, user_id, campaign_id, weekly_target, monthly_target, weekly_meeting_target, weekly_sale_target, activity_mode, commission_per_meeting, commission_per_sale, updated_at")
       .eq("team_id", context.profile.team_id),
@@ -52,8 +20,10 @@ export async function GET() {
       .eq("team_id", context.profile.team_id).order("full_name"),
     context.supabase.from("campaigns").select("id, name")
       .eq("team_id", context.profile.team_id).order("name"),
+    context.supabase.from("teams").select("seller_system_fee_dkk")
+      .eq("id", context.profile.team_id).maybeSingle(),
   ]);
-  const failed = [targets, meetings, profiles, campaigns].find((query) => query.error);
+  const failed = [targets, meetings, profiles, campaigns, team].find((query) => query.error);
   if (failed?.error) {
     console.error("Budget report query failed", failed.error.message);
     return apiError("Budgetoverblikket kunne ikke indlæses.", 500);
@@ -92,8 +62,15 @@ export async function GET() {
       expected_monthly_commission: monthlyExpectedCommission,
     };
   });
+  // Monthly system coverage per seller: the first part of the month's commission covers the system.
+  const feeDkk = Number(team.data?.seller_system_fee_dkk ?? DEFAULT_SYSTEM_FEE_DKK);
+  const grossByUser = new Map<string, number>();
+  for (const row of data) grossByUser.set(row.user_id, (grossByUser.get(row.user_id) ?? 0) + row.monthly_commission);
+  const systemFeeUsers: Record<string, SystemFeeSplit> = {};
+  for (const [userId, gross] of grossByUser) systemFeeUsers[userId] = splitEarnings(gross, feeDkk);
   return NextResponse.json({
     data,
+    system_fee: { fee_dkk: feeDkk, users: systemFeeUsers },
     members: profiles.data ?? [],
     campaigns: campaigns.data ?? [],
     activities: activityRows

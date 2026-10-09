@@ -10,6 +10,10 @@ type EarningItem = {
   company_name: string | null; campaign_name: string; partner_status: FeedbackStatus | null; suggested_dkk: number; decision: Decision;
 };
 
+type FeeRow = { user_id: string; seller_name: string; gross: number; covered: number; own: number };
+type SystemFee = { fee_dkk: number; month: FeeRow[] };
+const dkk = (value: number) => `${value.toLocaleString("da-DK", { maximumFractionDigits: 2 })} DKK`;
+
 async function earningsApi<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...options, headers: { ...(options?.body ? { "Content-Type": "application/json" } : {}) } });
   const body = await response.json().catch(() => null);
@@ -28,10 +32,15 @@ export function EarningsApprovals() {
   const [query, setQuery] = useState("");
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState("");
+  const [systemFee, setSystemFee] = useState<SystemFee | null>(null);
+  const [feeInput, setFeeInput] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setItems((await earningsApi<{ data: EarningItem[] }>("/api/admin/earnings")).data);
+      const result = await earningsApi<{ data: EarningItem[]; system_fee: SystemFee }>("/api/admin/earnings");
+      setItems(result.data);
+      setSystemFee(result.system_fee);
+      setFeeInput((current) => current || String(result.system_fee.fee_dkk));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Listen kunne ikke hentes.");
     }
@@ -55,6 +64,22 @@ export function EarningsApprovals() {
     }
   }
 
+  async function saveFee() {
+    const fee = Number(feeInput.replace(",", "."));
+    if (!Number.isFinite(fee) || fee < 0) { setError("Skriv et gyldigt beløb i DKK."); return; }
+    setBusyKey("fee");
+    setError("");
+    try {
+      await earningsApi("/api/admin/earnings", { method: "PATCH", body: JSON.stringify({ seller_system_fee_dkk: fee }) });
+      setNotice(`Systemdækningen er nu ${dkk(fee)} pr. sælger pr. måned.`);
+      await load();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Beløbet kunne ikke gemmes.");
+    } finally {
+      setBusyKey("");
+    }
+  }
+
   const visible = (items ?? []).filter((item) => (type === "all" || item.source_type === type)
     && (filter === "all" || (filter === "pending" ? !item.decision : item.decision?.status === filter))
     && (!query || `${item.seller_name} ${item.company_name ?? ""} ${item.campaign_name}`.toLocaleLowerCase("da-DK").includes(query.toLocaleLowerCase("da-DK"))));
@@ -66,6 +91,22 @@ export function EarningsApprovals() {
       <span className="secure-tag"><BadgeCheck size={15} /> {pending} afventer</span></div>
     {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span>
       <button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><CircleX size={16} /></button></div>}
+    <section className="panel ea-panel ea-fee">
+      <div className="panel-heading"><div><span className="panel-eyebrow">SYSTEMDÆKNING · DENNE MÅNED</span><h2>Sælgernes systemdækning</h2>
+        <p className="mg-fineprint">Hver sælger dækker systemet med de første {dkk(systemFee?.fee_dkk ?? 500)} af sin godkendte indtjening hver måned. Alt derover er sælgerens egen indtjening.</p></div></div>
+      <form className="ea-fee-form" onSubmit={(event) => { event.preventDefault(); void saveFee(); }}>
+        <label>Beløb pr. sælger pr. måned (DKK)<input className="ea-amount" inputMode="decimal" value={feeInput} onChange={(event) => setFeeInput(event.target.value)} /></label>
+        <button className="button button-primary" disabled={busyKey === "fee"}>Gem beløb</button>
+      </form>
+      <div className="table-scroll"><table className="ea-table"><thead><tr><th>Sælger</th><th>Godkendt denne måned</th><th>Systemdækning</th><th>Sælgerens indtjening</th></tr></thead>
+        <tbody>{(systemFee?.month ?? []).map((row) => <tr key={row.user_id}>
+          <td>{row.seller_name}</td><td>{dkk(row.gross)}</td>
+          <td>{dkk(row.covered)} / {dkk(systemFee?.fee_dkk ?? 0)}</td>
+          <td><strong>{dkk(row.own)}</strong></td>
+        </tr>)}
+          {!systemFee?.month.length && <tr><td colSpan={4} className="fb-empty">{systemFee ? "Ingen godkendt indtjening endnu denne måned." : "Henter …"}</td></tr>}
+        </tbody></table></div>
+    </section>
     <section className="panel ea-panel">
       <div className="ea-toolbar">
         <div className="mg-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Søg sælger, virksomhed eller kampagne" aria-label="Søg" /></div>
