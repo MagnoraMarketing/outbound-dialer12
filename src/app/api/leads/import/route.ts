@@ -112,9 +112,10 @@ export async function POST(request: Request) {
     if (!fresh.length) continue;
     async function insertWithIsolation(batch: typeof fresh): Promise<boolean> {
       if (!batch.length) return true;
-      const { data, error } = await context.supabase.from("leads").insert(batch).select("id");
+      // No RETURNING: the leads read policy cannot see rows during their own INSERT.
+      const { error } = await context.supabase.from("leads").insert(batch);
       if (!error) {
-        inserted += data.length;
+        inserted += batch.length;
         return true;
       }
       console.error("Lead import insert failed", { code: error.code, message: error.message, rows: batch.length });
