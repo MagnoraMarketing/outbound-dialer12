@@ -16,7 +16,7 @@ import {
   type AdminFeedbackMeeting, type MeetingFeedbackInfo,
 } from "@/components/meeting-feedback-views";
 import { PartnersView, type PartnerData } from "@/components/partners-view";
-import { MagnoraEmpire } from "@/components/game/magnora-empire";
+import { GamesHub } from "@/components/game/games-hub";
 import { EarningsApprovals } from "@/components/earnings-approvals";
 import { PhoneNumbersView } from "@/components/phone-numbers-view";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
@@ -128,7 +128,7 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "numbers", title: "Telefonnumre", icon: PhoneForwarded },
     { id: "settings", title: "Indstillinger", icon: Settings2 },
   ] },
-  { label: "MAGNORA EMPIRE", items: [
+  { label: "SPIL", items: [
     { id: "game", title: "Spil", icon: Gamepad2 },
   ] },
 ];
@@ -1504,7 +1504,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Magnora Empire",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Spil",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
@@ -1668,7 +1668,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           />}
           {page === "earnings" && profile.role === "admin" && <EarningsApprovals />}
           {page === "numbers" && profile.role === "admin" && <PhoneNumbersView />}
-          {page === "game" && <MagnoraEmpire />}
+          {page === "game" && <GamesHub />}
           {page === "settings" && <SettingsView user={user} profile={profile} onChangePassword={async (password) => {
             if (!supabase) throw new Error("Login er ikke konfigureret.");
             const { error: passwordError } = await supabase.auth.updateUser({ password });
