@@ -32,13 +32,16 @@ async function telnyxRequest(path: string, apiKey: string, body?: Record<string,
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15_000),
   });
-  const text = await response.text();
+  const text = (await response.text()).trim();
   let payload: TelnyxPayload | null = null;
   if (text) {
     try {
       payload = JSON.parse(text) as TelnyxPayload;
     } catch {
-      throw new Error("Telnyx returnerede et ugyldigt svar.");
+      // The access-token endpoint answers with the bare JWT as text/plain.
+      if (response.ok && /^[\w-]+\.[\w-]+\.[\w-]+$/.test(text)) return { token: text } as TelnyxPayload;
+      console.error("Telnyx returned a non-JSON response", response.status, text.slice(0, 200));
+      throw new Error(`Telnyx returnerede et ugyldigt svar (HTTP ${response.status}).`);
     }
   }
   if (!response.ok) {
