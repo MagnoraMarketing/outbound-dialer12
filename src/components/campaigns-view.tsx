@@ -1,12 +1,19 @@
 "use client";
 
-import { CalendarDays, Check, Copy, Mail, Plus, Upload } from "lucide-react";
+import { CalendarDays, Check, Copy, Mail, Phone, Plus, Upload } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { defaultEmailBody, defaultEmailSubject, emailPlaceholders } from "@/lib/campaign-email";
 
 type CampaignSettings = {
   id: string; name: string; partner_id: string | null; calendar_url: string | null; feed_url: string; lead_count: number;
   email_enabled: boolean; email_from_name: string; email_reply_to: string; email_subject: string; email_body: string;
+};
+
+type TeamNumber = { id: string; number: string; label: string; is_default: boolean };
+type ProviderNumber = { id: string; phone_number: string };
+type NumberState = {
+  data: TeamNumber[]; campaigns: { id: string; phone_number_id: string | null }[];
+  provider: { numbers: ProviderNumber[]; error: string | null }; env_fallback: string | null;
 };
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -23,6 +30,31 @@ export function CampaignsView({ onNotice, onAddLeads }: { onNotice: (message: st
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [numbers, setNumbers] = useState<NumberState | null>(null);
+  const loadNumbers = useCallback(async () => {
+    try { setNumbers(await request<NumberState>("/api/admin/phone-numbers")); } catch { setNumbers(null); }
+  }, []);
+  useEffect(() => { void loadNumbers(); }, [loadNumbers]);
+
+  async function assignNumber(campaignId: string, value: string) {
+    let body: Record<string, unknown>;
+    if (value === "default") body = { campaign_id: campaignId, phone_number_id: null };
+    else if (value.startsWith("team:")) body = { campaign_id: campaignId, phone_number_id: value.slice(5) };
+    else if (value.startsWith("provider:")) body = { campaign_id: campaignId, provider_id: value.slice(9) };
+    else {
+      // Typed by hand: add it to the team first, then assign it.
+      await request("/api/admin/phone-numbers", { method: "POST", body: JSON.stringify({ number: value, label: "" }) }).catch((error: Error) => {
+        if (!/allerede/.test(error.message)) throw error;
+      });
+      const state = await request<NumberState>("/api/admin/phone-numbers");
+      const added = state.data.find((number) => number.number === value.replace(/[\s().-]/g, ""));
+      if (!added) throw new Error("Nummeret kunne ikke tilføjes.");
+      body = { campaign_id: campaignId, phone_number_id: added.id };
+    }
+    await request("/api/admin/phone-numbers", { method: "PATCH", body: JSON.stringify(body) });
+    await loadNumbers();
+    onNotice("Kampagnens telefonnummer er gemt.");
+  }
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -72,12 +104,14 @@ export function CampaignsView({ onNotice, onAddLeads }: { onNotice: (message: st
     {!loading && !campaigns.length && !error && <div className="panel cs-card"><p className="fb-muted">Ingen kampagner endnu. Opret den første ovenfor.</p></div>}
     <div className="cs-list">{campaigns.map((campaign) => <CampaignCard key={campaign.id} campaign={campaign}
       open={openId === campaign.id} onToggle={() => setOpenId(openId === campaign.id ? null : campaign.id)} onAddLeads={() => onAddLeads(campaign.id)}
+      numbers={numbers} onAssignNumber={(value) => assignNumber(campaign.id, value)}
       onSaved={(saved) => { setCampaigns((current) => current.map((item) => item.id === saved.id ? { ...item, ...saved } : item)); onNotice("Kampagnen er gemt."); }} />)}</div>
   </div>;
 }
 
-function CampaignCard({ campaign, open, onToggle, onSaved, onAddLeads }: {
-  campaign: CampaignSettings; open: boolean; onToggle: () => void; onAddLeads: () => void; onSaved: (saved: Partial<CampaignSettings> & { id: string }) => void;
+function CampaignCard({ campaign, open, onToggle, onSaved, onAddLeads, numbers, onAssignNumber }: {
+  campaign: CampaignSettings; open: boolean; onToggle: () => void; onAddLeads: () => void;
+  numbers: NumberState | null; onAssignNumber: (value: string) => Promise<void>; onSaved: (saved: Partial<CampaignSettings> & { id: string }) => void;
 }) {
   const [form, setForm] = useState(() => ({
     calendar_url: campaign.calendar_url ?? "",
@@ -121,6 +155,7 @@ function CampaignCard({ campaign, open, onToggle, onSaved, onAddLeads }: {
         <span className={`cs-badge ${campaign.email_enabled ? "cs-on" : ""}`}><Mail size={12} /> {campaign.email_enabled ? "E-mail slået til" : "E-mail fra"}</span>
       </span>
     </button>
+    <NumberPicker campaignId={campaign.id} numbers={numbers} onAssign={onAssignNumber} />
     <button className="button button-primary button-small cs-add" onClick={onAddLeads}><Upload size={14} /> Tilføj leads</button></div>
     {open && <form className="cs-form" onSubmit={save}>
       <fieldset><legend><CalendarDays size={14} /> Kalender</legend>
@@ -144,4 +179,53 @@ function CampaignCard({ campaign, open, onToggle, onSaved, onAddLeads }: {
       <div className="cs-actions"><button className="button button-primary" disabled={busy}>{busy ? "Gemmer …" : "Gem kampagne"}</button></div>
     </form>}
   </section>;
+}
+
+// The outgoing number the campaign calls from: a team number, a number straight
+// from the telephony account, one typed by hand, or the team default.
+function NumberPicker({ campaignId, numbers, onAssign }: {
+  campaignId: string; numbers: NumberState | null; onAssign: (value: string) => Promise<void>;
+}) {
+  const [manual, setManual] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (!numbers) return null;
+  const current = numbers.campaigns.find((campaign) => campaign.id === campaignId)?.phone_number_id ?? null;
+  const fallback = numbers.data.find((number) => number.is_default)?.number ?? numbers.env_fallback;
+  const added = new Set(numbers.data.map((number) => number.number));
+  const available = numbers.provider.numbers.filter((number) => !added.has(number.phone_number));
+
+  async function choose(value: string) {
+    if (value === "manual") { setManual(true); return; }
+    setBusy(true);
+    setError("");
+    try {
+      await onAssign(value);
+      setManual(false);
+      setTyped("");
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : "Nummeret kunne ikke gemmes.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <span className="cs-number">
+    <Phone size={13} />
+    {manual ? <form onSubmit={(event) => { event.preventDefault(); void choose(typed.trim()); }}>
+      <input autoFocus inputMode="tel" value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="+4512345678" aria-label="Telefonnummer" />
+      <button className="button button-secondary button-small" disabled={busy || !typed.trim()}>{busy ? "Gemmer …" : "Gem"}</button>
+      <button type="button" className="text-button" onClick={() => setManual(false)}>Annuller</button>
+    </form>
+      : <select aria-label="Udgående telefonnummer" disabled={busy} value={current ? `team:${current}` : "default"} onChange={(event) => void choose(event.target.value)}>
+        <option value="default">{fallback ? `Standardnummer (${fallback})` : "Intet nummer – vælg et"}</option>
+        {numbers.data.length > 0 && <optgroup label="Teamets numre">{numbers.data.map((number) =>
+          <option key={number.id} value={`team:${number.id}`}>{number.number}{number.label ? ` · ${number.label}` : ""}</option>)}</optgroup>}
+        {available.length > 0 && <optgroup label="Fra telefonikontoen">{available.map((number) =>
+          <option key={number.id} value={`provider:${number.id}`}>{number.phone_number}</option>)}</optgroup>}
+        <option value="manual">+ Tilføj nummer manuelt …</option>
+      </select>}
+    {error && <small className="form-error">{error}</small>}
+  </span>;
 }
