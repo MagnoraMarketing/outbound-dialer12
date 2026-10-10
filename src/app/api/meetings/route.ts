@@ -54,6 +54,13 @@ export async function POST(request: Request) {
     return apiError("Virksomhed samt gyldig mødedato og -tid er påkrævet.");
   }
   const { context } = result;
+  // Meetings land in the campaign's calendar unless an admin gave a specific link.
+  let campaignCalendar: string | null = null;
+  const { data: lead } = await context.supabase.from("leads").select("campaign_id").eq("id", body.lead_id).maybeSingle();
+  if (lead?.campaign_id) {
+    const { data: campaign } = await context.supabase.from("campaigns").select("calendar_url").eq("id", lead.campaign_id).maybeSingle();
+    campaignCalendar = (campaign as { calendar_url?: string | null } | null)?.calendar_url ?? null;
+  }
   const { data, error } = await context.supabase.from("meetings").insert({
     team_id: context.profile.team_id,
     lead_id: body.lead_id,
@@ -63,7 +70,7 @@ export async function POST(request: Request) {
     notes: typeof body.notes === "string" ? body.notes.slice(0, 2000) : "",
     // Meeting links are managed by administrators only.
     calendar_url: context.profile.role === "admin" && typeof body.calendar_url === "string" && body.calendar_url.trim()
-      ? body.calendar_url.trim().slice(0, 2000) : null,
+      ? body.calendar_url.trim().slice(0, 2000) : campaignCalendar,
   }).select().single();
   if (error) {
     console.error("Meeting creation failed", error.message);

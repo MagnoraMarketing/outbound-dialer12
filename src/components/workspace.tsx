@@ -6,9 +6,9 @@ import Papa from "papaparse";
 import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
   CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, PhoneForwarded, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
-  CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
+  CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Mail, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
-  CreditCard, Crown, Eye, Target, Timer, Trash2, Users, X,
+  CreditCard, Crown, Eye, Megaphone, Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,6 +20,9 @@ import { GamesHub } from "@/components/game/games-hub";
 import { SubscriptionView } from "@/components/subscription-view";
 import { EarningsApprovals } from "@/components/earnings-approvals";
 import { PhoneNumbersView } from "@/components/phone-numbers-view";
+import { CampaignsView } from "@/components/campaigns-view";
+import { FollowUpEmailDialog } from "@/components/follow-up-email";
+import { emptyLeadPick, ensureLead, LeadPicker, type LeadPick } from "@/components/lead-picker";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
 type AccessMode = "all" | "assigned";
@@ -28,7 +31,7 @@ type Lead = {
   id: string; company_name: string; cvr: string | null; contact_person: string | null; phone: string;
   email?: string | null; website?: string | null; address?: string | null; city: string | null;
   industry?: string | null; employee_count?: number | null; notes: string; status: string;
-  assigned_user_id: string | null; next_follow_up_at: string | null; created_at: string;
+  assigned_user_id: string | null; campaign_id?: string | null; lead_list_id?: string | null; next_follow_up_at: string | null; created_at: string;
 };
 type DashboardData = {
   calls: number; connected: number; conversations: number; meetings: number; conversion_rate: number;
@@ -85,7 +88,7 @@ type TeamMember = {
   campaign_ids?: string[]; lead_list_ids?: string[];
 };
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
-type Campaign = { id: string; name: string; created_at: string };
+type Campaign = { id: string; name: string; created_at: string; calendar_url?: string | null; email_enabled?: boolean };
 type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
 type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
 type ManagedRole = "admin" | "user";
@@ -94,7 +97,7 @@ type AdminOverview = {
   totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
   campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
 };
-type Page = "subscription" | "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "numbers" | "game" | "messages" | "settings";
+type Page = "subscription" | "campaigns" | "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "numbers" | "game" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -123,6 +126,7 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
   ] },
   { label: "ADMINISTRATION", items: [
     { id: "team", title: "Team", icon: Users },
+    { id: "campaigns", title: "Kampagner", icon: Megaphone },
     { id: "partners", title: "Samarbejdspartnere", icon: Handshake },
     { id: "feedback", title: "Mødefeedback", icon: ClipboardCheck },
     { id: "earnings", title: "Godkend indtjening", icon: BadgeCheck },
@@ -134,13 +138,15 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "game", title: "Spil", icon: Gamepad2 },
   ] },
 ];
-const csvFields: { key: CsvField; label: string }[] = [
-  { key: "company_name", label: "Virksomhed" }, { key: "cvr", label: "CVR" },
-  { key: "contact_person", label: "Kontaktperson" }, { key: "phone", label: "Telefon" },
-  { key: "email", label: "E-mail" }, { key: "website", label: "Hjemmeside" },
-  { key: "address", label: "Adresse" }, { key: "city", label: "By" },
-  { key: "industry", label: "Branche" }, { key: "employee_count", label: "Medarbejdere" },
-  { key: "notes", label: "Noter" },
+const csvFields: { key: CsvField; label: string; aliases?: string[] }[] = [
+  { key: "company_name", label: "Virksomhed", aliases: ["Firmanavn", "Firma", "Virksomhedsnavn", "Navn", "Company", "Company name"] },
+  { key: "cvr", label: "CVR", aliases: ["CVR-nummer", "CVR nr", "CVR-nr."] },
+  { key: "contact_person", label: "Kontaktperson", aliases: ["Kontakt", "Contact", "Contact person"] },
+  { key: "phone", label: "Telefon", aliases: ["Telefonnummer", "Tlf", "Tlf.", "Tlf nr", "Mobil", "Phone"] },
+  { key: "email", label: "E-mail", aliases: ["Email", "Mail"] }, { key: "website", label: "Hjemmeside", aliases: ["Website", "Web"] },
+  { key: "address", label: "Adresse", aliases: ["Address"] }, { key: "city", label: "By", aliases: ["Postdistrikt", "City"] },
+  { key: "industry", label: "Branche", aliases: ["Industry"] }, { key: "employee_count", label: "Medarbejdere", aliases: ["Antal ansatte", "Ansatte", "Employees"] },
+  { key: "notes", label: "Noter", aliases: ["Note", "Bemærkninger"] },
 ];
 
 function browserSupabase() {
@@ -246,8 +252,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [csvProgress, setCsvProgress] = useState(0);
   const [csvErrors, setCsvErrors] = useState<{ row: number; reason: string }[]>([]);
   const [csvBusy, setCsvBusy] = useState(false);
-  const [selectedCallbackLead, setSelectedCallbackLead] = useState("");
-  const [meetingLeadId, setMeetingLeadId] = useState("");
+  const [callbackPick, setCallbackPick] = useState<LeadPick>(emptyLeadPick);
+  const [meetingPick, setMeetingPick] = useState<LeadPick>(emptyLeadPick);
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingNote, setMeetingNote] = useState("");
   const [inviteError, setInviteError] = useState("");
@@ -359,7 +365,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   }, [leadFilters, leadStatus, leadsPage, profile, selectedCampaignId, selectedLeadListId]);
 
   useEffect(() => {
-    if (!user || !profile?.team_id || !["dialer", "import", "messages"].includes(page)) return;
+    if (!user || !profile?.team_id || !["dialer", "import", "messages", "meetings", "callbacks"].includes(page)) return;
     let alive = true;
     void Promise.all([
       api<{ data: Campaign[] }>("/api/campaigns"),
@@ -902,16 +908,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
-  async function openPlanner(kind: "callback" | "meeting") {
+  function openPlanner(kind: "callback" | "meeting", lead?: Lead | null) {
+    const pick = lead
+      ? { leadId: lead.id, companyName: lead.company_name, phone: lead.phone, campaignId: lead.campaign_id ?? "" }
+      : emptyLeadPick;
+    if (kind === "callback") setCallbackPick(pick);
+    else setMeetingPick(pick);
     setModal(kind);
-    if (!leads.length) {
-      try {
-        const result = await api<{ data: Lead[] }>("/api/leads");
-        setLeads(result.data);
-      } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Virksomheder kunne ikke indlæses.");
-      }
-    }
   }
 
   function exportCsv(records: object[], filename: string) {
@@ -1227,39 +1230,63 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
-  function readCsv(file?: File) {
+  async function decodeCsv(file: File) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      // Excel on Windows saves CSV as Windows-1252, which breaks æ, ø and å as UTF-8.
+      return new TextDecoder("windows-1252").decode(bytes);
+    }
+  }
+
+  async function parseLeadFile(file: File): Promise<{ headers: string[]; rows: CsvRow[]; formatErrors: number }> {
+    if (/\.xlsx$/i.test(file.name)) {
+      const { readSheet } = await import("read-excel-file/browser");
+      const sheet = await readSheet(file);
+      const headerRow = sheet[0] ?? [];
+      const headers = headerRow.map((cell, index) => String(cell ?? "").trim() || `Kolonne ${index + 1}`);
+      const rows = sheet.slice(1)
+        .filter((row) => row.some((cell) => cell !== null && String(cell).trim() !== ""))
+        .map((row) => Object.fromEntries(headers.map((header, index) => {
+          const cell = row[index] as unknown;
+          return [header, cell === null || cell === undefined ? "" : cell instanceof Date ? cell.toISOString().slice(0, 10) : String(cell)];
+        })));
+      return { headers, rows, formatErrors: 0 };
+    }
+    if (/\.xls$/i.test(file.name)) throw new Error("Gamle .xls-filer understøttes ikke. Gem filen som .xlsx eller CSV i Excel.");
+    const text = await decodeCsv(file);
+    const result = Papa.parse<CsvRow>(text, { header: true, skipEmptyLines: "greedy", transformHeader: (header) => header.trim() });
+    return { headers: result.meta.fields ?? [], rows: result.data, formatErrors: result.errors.length };
+  }
+
+  async function readCsv(file?: File) {
     if (!file) return;
     setCsvBusy(true);
     setCsvErrors([]);
-    Papa.parse<CsvRow>(file, {
-      header: true,
-      skipEmptyLines: "greedy",
-      transformHeader: (header) => header.trim(),
-      complete: (result) => {
-        if (result.data.length > 10_000) {
-          setError("CSV-filen er for stor. Importér højst 10.000 rækker ad gangen.");
-          setCsvHeaders([]);
-          setCsvRows([]);
-          setCsvBusy(false);
-          return;
-        }
-        if (result.errors.length) setError(`CSV-filen har ${result.errors.length} formatfejl. Kontrollér filen før import.`);
-        setCsvHeaders(result.meta.fields ?? []);
-        setCsvRows(result.data);
-        const mapping: Partial<Record<CsvField, string>> = {};
-        for (const field of csvFields) {
-          const match = result.meta.fields?.find((header) => header.toLocaleLowerCase("da-DK") === field.label.toLocaleLowerCase("da-DK")
-            || header.toLocaleLowerCase("da-DK") === field.key.toLocaleLowerCase("da-DK"));
-          if (match) mapping[field.key] = match;
-        }
-        setCsvMapping(mapping);
-        setCsvBusy(false);
-      },
-      error: (parseError) => {
-        setError(parseError.message);
-        setCsvBusy(false);
-      },
-    });
+    try {
+      const { headers, rows, formatErrors } = await parseLeadFile(file);
+      if (rows.length > 10_000) {
+        setError("Filen er for stor. Importér højst 10.000 rækker ad gangen.");
+        setCsvHeaders([]);
+        setCsvRows([]);
+        return;
+      }
+      if (formatErrors) setError(`Filen har ${formatErrors} formatfejl. Kontrollér filen før import.`);
+      setCsvHeaders(headers);
+      setCsvRows(rows);
+      const mapping: Partial<Record<CsvField, string>> = {};
+      for (const field of csvFields) {
+        const names = [field.key, field.label, ...(field.aliases ?? [])].map((name) => name.toLocaleLowerCase("da-DK"));
+        const match = headers.find((header) => names.includes(header.toLocaleLowerCase("da-DK")));
+        if (match) mapping[field.key] = match;
+      }
+      setCsvMapping(mapping);
+    } catch (readError) {
+      setError(readError instanceof Error && readError.message.includes(".xls") ? readError.message : "Filen kunne ikke læses. Brug CSV, TXT eller Excel (.xlsx).");
+    } finally {
+      setCsvBusy(false);
+    }
   }
 
   async function importCsv() {
@@ -1383,8 +1410,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      const leadId = await ensureLead(callbackPick);
       await api("/api/callbacks", { method: "POST", body: JSON.stringify({
-        lead_id: selectedCallbackLead,
+        lead_id: leadId,
         callback_at: new Date(String(form.get("callback_at"))).toISOString(),
         notes: String(form.get("notes") ?? ""),
       }) });
@@ -1412,8 +1440,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
+      const leadId = await ensureLead(meetingPick);
       await api("/api/meetings", { method: "POST", body: JSON.stringify({
-        lead_id: meetingLeadId,
+        lead_id: leadId,
         meeting_at: new Date(meetingDate).toISOString(),
         meeting_type: String(form.get("meeting_type") ?? "online"),
         notes: meetingNote,
@@ -1524,7 +1553,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Spil", subscription: "Abonnement",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", campaigns: "Kampagner", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Spil", subscription: "Abonnement",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
@@ -1550,7 +1579,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
               && (item.id !== "leads" || profile.role !== "salesperson")
               && (item.id !== "team" || profile.role === "admin")
               && (item.id !== "dialpad" || profile.role === "admin" || profile.can_dial_manual !== false)
-              && (!["partners", "feedback", "earnings", "numbers", "subscription"].includes(item.id) || profile.role === "admin"));
+              && (!["campaigns", "partners", "feedback", "earnings", "numbers", "subscription"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
@@ -1627,20 +1656,17 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             onCreateLead={createDialerLead}
             note={callNote} setNote={setCallNote} callbackAt={callbackAt} setCallbackAt={setCallbackAt}
             busy={outcomeBusy} onCall={beginCall} onOutcome={finishCall} onNext={advanceLead}
-            onHistoryError={setError}
+            onHistoryError={setError} onNotice={setNotice}
             onRefresh={() => { setActiveLead(null); void loadPageData("dialer"); }}
-            onBookMeeting={() => {
-              if (activeLead) setMeetingLeadId(activeLead.id);
-              void openPlanner("meeting");
-            }}
+            onBookMeeting={() => openPlanner("meeting", activeLead)}
           />}
           {page === "dialpad" && <DialpadView
             phone={manualPhone} setPhone={setManualPhone} call={activeCall?.lead_id === null ? activeCall : null}
             elapsed={elapsed} callStarted={callStarted} note={callNote} setNote={setCallNote}
             busy={outcomeBusy} onCall={beginManualCall} onOutcome={finishCall}
           />}
-          {page === "callbacks" && <CallbacksView callbacks={callbacks} loading={loading} onComplete={completeCallback} onSchedule={() => void openPlanner("callback")} />}
-          {page === "meetings" && <MeetingsView meetings={meetings} loading={loading} onBook={() => void openPlanner("meeting")} />}
+          {page === "callbacks" && <CallbacksView callbacks={callbacks} loading={loading} onComplete={completeCallback} onSchedule={() => openPlanner("callback")} />}
+          {page === "meetings" && <MeetingsView meetings={meetings} loading={loading} onBook={() => openPlanner("meeting")} />}
           {page === "history" && <HistoryView calls={calls} loading={loading} onExport={() => exportCsv(calls.map((call) => ({
             ...call, company_name: call.leads?.company_name ?? "", contact_person: call.leads?.contact_person ?? "",
           })), "nordcall-opkald.csv")} />}
@@ -1652,7 +1678,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             onNewCampaignName={setNewCampaignName} onNewLeadListName={setNewLeadListName}
             onCreateCampaign={() => void createCampaign()} onCreateLeadList={() => void createLeadList()}
             fileRef={fileRef} onFile={readCsv} onMapping={(key, value) => setCsvMapping((current) => ({ ...current, [key]: value }))}
-            onImport={importCsv} onDrop={(file) => readCsv(file)}
+            onImport={importCsv} onDrop={(file) => void readCsv(file)}
           />}
           {page === "team" && <TeamView
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
@@ -1678,6 +1704,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           />}
           {page === "feedback" && profile.role === "admin" && <AdminFeedbackView
             meetings={adminFeedback} campaigns={campaigns} loading={loading} onOpenPartners={() => setPage("partners")} />}
+          {page === "campaigns" && profile.role === "admin" && <CampaignsView onNotice={setNotice} />}
           {page === "partners" && profile.role === "admin" && <PartnersView
             partners={partnerData.data} campaigns={partnerData.campaigns} loading={loading}
             onCreatePartner={async (input) => {
@@ -1753,13 +1780,15 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           <ModalActions onCancel={() => setModal(null)} submit="Gem virksomhed" />
         </form>}
         {modal === "callback" && <form className="modal-form" onSubmit={addCallback}>
-          <label>Virksomhed<select required value={selectedCallbackLead} onChange={(event) => setSelectedCallbackLead(event.target.value)}><option value="">Vælg virksomhed …</option>{leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.company_name} · {lead.phone}</option>)}</select></label>
+          <LeadPicker value={callbackPick} onChange={setCallbackPick} />
           <label>Dato og tidspunkt<input name="callback_at" required type="datetime-local" min={new Date().toISOString().slice(0, 16)} /></label>
           <label>Noter<textarea name="notes" rows={3} placeholder="Hvad skal I følge op på?" /></label>
           <ModalActions onCancel={() => setModal(null)} submit="Planlæg callback" />
         </form>}
         {modal === "meeting" && <form className="modal-form" onSubmit={addMeeting}>
-          <label>Virksomhed<select required value={meetingLeadId} onChange={(event) => setMeetingLeadId(event.target.value)}><option value="">Vælg virksomhed …</option>{leads.map((lead) => <option value={lead.id} key={lead.id}>{lead.company_name}</option>)}</select></label>
+          <LeadPicker value={meetingPick} onChange={setMeetingPick} />
+          {campaigns.find((campaign) => campaign.id === meetingPick.campaignId)?.calendar_url && <a className="text-button meeting-calendar-link" target="_blank" rel="noreferrer"
+            href={campaigns.find((campaign) => campaign.id === meetingPick.campaignId)?.calendar_url ?? undefined}><CalendarDays size={14} /> Åbn kampagnens kalender og book tiden</a>}
           <label>Dato og tidspunkt<input required type="datetime-local" value={meetingDate} onChange={(event) => setMeetingDate(event.target.value)} /></label>
           <label>Mødetype<select name="meeting_type"><option value="online">Online</option><option value="in_person">Personligt møde</option><option value="phone">Telefon</option></select></label>
           {profile?.role === "admin" && <label>Kalenderlink<input name="calendar_url" type="url" placeholder="https://…" /></label>}
@@ -1853,6 +1882,7 @@ function AdminHome({ name, setPage }: { name: string; setPage: (page: Page) => v
   const links: { page: Page; title: string; text: string; icon: typeof LayoutDashboard }[] = [
     { page: "team", title: "Team og sælgere", text: "Opret sælgere, roller og adgang til kampagner.", icon: Users },
     { page: "import", title: "Kampagner og leads", text: "Opret kampagner og importér ringelister.", icon: FileSpreadsheet },
+    { page: "campaigns", title: "Kalender og e-mail", text: "Vælg kalender og opfølgningsmail pr. kampagne.", icon: Megaphone },
     { page: "numbers", title: "Telefonnumre", text: "Tildel udgående numre til kampagnerne.", icon: PhoneForwarded },
     { page: "partners", title: "Samarbejdspartnere", text: "Partnere, kampagner og kundelogins.", icon: Handshake },
     { page: "feedback", title: "Mødefeedback", text: "Overskredne møder og partnernes status.", icon: ClipboardCheck },
@@ -2138,7 +2168,7 @@ function LeadsView({ leads, total, page, onPage, loading, status, setStatus, fil
 
 function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed, callStarted, voiceState, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
   onCampaign, onLeadList, manualPhone, setManualPhone, onManualCall, callStartBusy, onCreateLead,
-  note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting, onHistoryError }: {
+  note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting, onHistoryError, onNotice }: {
   lead: Lead | null; queueCount: number; loading: boolean; leadListsLoading: boolean; call: Call | null; elapsed: number; callStarted: number | null; voiceState: "disconnected" | "connecting" | "ready"; note: string; setNote: (value: string) => void;
   campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
   onCampaign: (id: string) => void; onLeadList: (id: string) => void;
@@ -2146,8 +2176,11 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
   onCreateLead: (input: { company_name: string; phone: string; contact_person: string; notes: string }) => Promise<boolean>;
   callbackAt: string; setCallbackAt: (value: string) => void; busy: boolean; onCall: () => void; onOutcome: (outcome: string) => void;
   onNext: () => void; onRefresh: () => void; onBookMeeting: () => void; onHistoryError: (message: string) => void;
+  onNotice: (message: string) => void;
 }) {
   const [history, setHistory] = useState<LeadHistoryEntry[]>([]);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const campaign = campaigns.find((item) => item.id === (lead?.campaign_id || selectedCampaignId));
   const [historyLoading, setHistoryLoading] = useState(false);
   const [newLead, setNewLead] = useState({ company_name: "", phone: "", contact_person: "", notes: "" });
   const [newLeadBusy, setNewLeadBusy] = useState(false);
@@ -2202,13 +2235,6 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
       </select></label>
       <span>{leadListsLoading ? "Henter dine tildelte leadlister …" : "Vælg en kampagne og eventuelt en bestemt leadliste."}</span>
     </div>
-    <div className="panel dialer-manual-call">
-      <div><span className="panel-eyebrow">MANUELT OPKALD</span><strong>Ring til et nummer uden for leadlisten</strong></div>
-      <label>Telefonnummer<input inputMode="tel" value={manualPhone} onChange={(event) => setManualPhone(event.target.value)} placeholder="+45 12 34 56 78" /></label>
-      <button className="button button-primary button-small" disabled={!manualPhone.trim() || callStartBusy || active} onClick={onManualCall}>
-        <PhoneCall size={14} /> {callStartBusy ? "Starter …" : "Ring manuelt"}
-      </button>
-    </div>
     <div className="dialer-grid">
       <div className="panel current-lead-panel">
         {lead ? <>
@@ -2241,7 +2267,8 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
             </div>}
           </div>
           <div className="dialer-notes"><div className="notes-heading"><span><MoreHorizontal size={16} /> Samtalenoter</span><small>Synkroniseres, når du vælger resultat</small></div><textarea rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Skriv et par ord, du vil huske til næste gang …" /></div>
-          <div className="dialer-bottom"><button className="subtle-action" onClick={onBookMeeting}><CalendarDays size={15} /> Planlæg møde</button><span className="secure-call"><CheckCircle2 size={14} /> Sikker forbindelse</span></div>
+          <div className="dialer-bottom"><span className="dialer-bottom-actions"><button className="subtle-action" onClick={onBookMeeting}><CalendarDays size={15} /> Planlæg møde</button>
+            {campaign?.email_enabled && <button className="subtle-action" onClick={() => setEmailOpen(true)}><Mail size={15} /> Send e-mail</button>}</span><span className="secure-call"><CheckCircle2 size={14} /> Sikker forbindelse</span></div>
         </> : call && !call.lead_id ? <div className="manual-call-active">
           <span className="empty-queue-icon"><PhoneCall size={22} /></span><h2>Manuelt opkald</h2><strong>{call.phone}</strong>
           <div className={`call-state state-${call.status}`}><span className="call-state-dot" />{awaitingOutcome ? "Opkald afsluttet — vælg resultat" : call.status === "ringing" ? "Ringer …" : call.status === "answered" ? "Forbundet" : "Opkald starter"}{!awaitingOutcome && <span className="timer-display">{String(Math.floor(elapsed / 60)).padStart(2, "0")}:{String(elapsed % 60).padStart(2, "0")}</span>}</div>
@@ -2265,7 +2292,15 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
           </form>}
         </div>}
       </div>
+      {emailOpen && lead && <FollowUpEmailDialog leadId={lead.id} companyName={lead.company_name} onClose={() => setEmailOpen(false)} onSent={onNotice} />}
       <aside className="dialer-side">
+        <div className="panel dialer-manual-call">
+          <div><span className="panel-eyebrow">MANUELT OPKALD</span><strong>Ring til et nummer uden for leadlisten</strong></div>
+          <label>Telefonnummer<input inputMode="tel" value={manualPhone} onChange={(event) => setManualPhone(event.target.value)} placeholder="+45 12 34 56 78" /></label>
+          <button className="button button-primary button-small" disabled={!manualPhone.trim() || callStartBusy || active} onClick={onManualCall}>
+            <PhoneCall size={14} /> {callStartBusy ? "Starter …" : "Ring manuelt"}
+          </button>
+        </div>
         <div className="panel context-panel"><div className="panel-heading"><div><span className="panel-eyebrow">VIRKSOMHEDSINFO</span><h2>Overblik</h2></div><Building2 size={17} className="heading-muted" /></div>
           {lead ? <><div className="context-row"><span>Leadstatus</span><span className={`status-pill status-${lead.status}`}>{statuses[lead.status] || lead.status}</span></div><div className="context-row"><span>Oprettet</span><strong>{formatDate(lead.created_at)}</strong></div><div className="context-row"><span>Næste opfølgning</span><strong>{lead.next_follow_up_at ? `${formatDate(lead.next_follow_up_at)} · ${formatTime(lead.next_follow_up_at)}` : "Ikke planlagt"}</strong></div>
             <div className="context-note"><span>LEADNOTER</span><p>{lead.notes || "Ingen noter endnu. Gode noter gør næste samtale endnu bedre."}</p></div></> : <EmptyInline title="Ingen virksomhed valgt" description="Vælg et lead i opkaldskøen." />}
@@ -2405,10 +2440,10 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
       {!headers.length ? <button className={`dropzone ${dragging ? "dropzone-active" : ""}`} onClick={() => fileRef.current?.click()}
         onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
         onDrop={(event) => { event.preventDefault(); setDragging(false); const file = event.dataTransfer.files[0]; if (file) onDrop(file); }}>
-        <input ref={fileRef} hidden type="file" accept=".csv,text/csv" onChange={(event) => onFile(event.target.files?.[0])} />
-        <span className="upload-icon"><FileSpreadsheet size={23} /></span><strong>Slip din CSV-fil her</strong><span>eller <u>vælg en fil fra din computer</u></span><small>CSV · Op til 10.000 virksomheder · UTF-8</small>
+        <input ref={fileRef} hidden type="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => onFile(event.target.files?.[0])} />
+        <span className="upload-icon"><FileSpreadsheet size={23} /></span><strong>Slip din fil her</strong><span>eller <u>vælg en fil fra din computer</u></span><small>CSV, TXT eller Excel (.xlsx) · Op til 10.000 virksomheder</small>
       </button> : <div className="import-content">
-        <div className="import-file-row"><span className="upload-icon upload-icon-small"><FileSpreadsheet size={18} /></span><span><strong>{rows.length.toLocaleString("da-DK")} rækker fundet</strong><small>{headers.length} kolonner · CSV-fil</small></span><button className="text-button" onClick={() => fileRef.current?.click()}>Vælg en anden fil</button><input ref={fileRef} hidden type="file" accept=".csv,text/csv" onChange={(event) => onFile(event.target.files?.[0])} /></div>
+        <div className="import-file-row"><span className="upload-icon upload-icon-small"><FileSpreadsheet size={18} /></span><span><strong>{rows.length.toLocaleString("da-DK")} rækker fundet</strong><small>{headers.length} kolonner</small></span><button className="text-button" onClick={() => fileRef.current?.click()}>Vælg en anden fil</button><input ref={fileRef} hidden type="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,text/plain,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => onFile(event.target.files?.[0])} /></div>
         <div className="mapping-header"><div><h2>Match dine kolonner</h2><p>Vælg hvilken CSV-kolonne, der svarer til hvert felt.</p></div><span className="match-count">{Object.values(mapping).filter(Boolean).length} felter matchet</span></div>
         <div className="mapping-grid">{csvFields.map((field) => <label className="mapping-row" key={field.key}><span>{field.label}{["company_name", "phone"].includes(field.key) && <i> * </i>}</span><ArrowRight size={14} /><select value={mapping[field.key] || ""} onChange={(event) => onMapping(field.key, event.target.value)}><option value="">Spring over</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div>
         <div className="preview-table"><div className="preview-heading"><strong>Forhåndsvisning</strong><span>De første 5 rækker</span></div><div className="table-scroll"><table><thead><tr>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <th key={field.key}>{field.label}</th>)}</tr></thead><tbody>{rows.slice(0, 5).map((row, index) => <tr key={index}>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <td key={field.key}>{row[mapping[field.key]!] || "—"}</td>)}</tr>)}</tbody></table></div></div>

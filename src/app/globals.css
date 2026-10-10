@@ -400,6 +400,7 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .dialer-notes textarea { width: 100%; min-height: 65px; padding: 10px; resize: vertical; border: 1px solid #ebeff5; border-radius: 7px; color: #667189; background: #fcfcfd; font-size: 9px; line-height: 1.5; outline: none; }
 .dialer-notes textarea:focus { border-color: #b8c1f1; }
 .dialer-bottom { display: flex; align-items: center; justify-content: space-between; padding-top: 12px; }
+.dialer-bottom-actions { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .subtle-action { display: inline-flex; align-items: center; gap: 6px; border: 0; color: #71809a; background: transparent; font-size: 9px; cursor: pointer; }
 .subtle-action:hover { color: #465dce; }
 .secure-call { display: inline-flex; align-items: center; gap: 5px; color: #70a892; font-size: 8px; }
@@ -549,6 +550,8 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .campaign-selectors > span { color: #98a2b2; font-size: 9px; line-height: 1.5; }
 .dialer-manual-call { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 280px) auto; align-items: center; gap: 12px; padding: 12px 15px; margin-bottom: 14px; }
 .dialer-manual-call > div { display: grid; gap: 4px; }
+.dialer-side .dialer-manual-call { grid-template-columns: 1fr; margin-bottom: 0; }
+.dialer-side .dialer-manual-call .button { width: 100%; justify-content: center; }
 .dialer-manual-call > div > strong { color: #59657d; font-size: 9px; }
 .dialer-manual-call label { display: grid; gap: 4px; color: #78849a; font-size: 9px; }
 .dialer-manual-call input, .dialer-create-lead input, .dialer-create-lead textarea, .manual-call-active textarea { min-width: 0; width: 100%; padding: 9px; border: 1px solid #e4e8f0; border-radius: 7px; color: #536078; background: #fff; font: inherit; }
@@ -634,6 +637,19 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .modal-form input, .modal-form select { min-height: 37px; font-size: 10px; }
 .modal-form textarea { min-height: 62px; padding: 9px 11px; resize: vertical; font-size: 10px; }
 .modal-form select { cursor: pointer; }
+.lead-picker { display: grid; gap: 8px; }
+.lead-picker > label, .lead-picker-new label { display: grid; }
+.lead-picker-label { color: #67738a; font-size: 9px; font-weight: 600; }
+.lead-picker-chosen { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid #e4e8f0; border-radius: 7px; background: #f8faff; font-size: 10px; }
+.lead-picker-chosen small { color: #8a95a8; }
+.lead-picker-chosen .text-button { margin-left: auto; }
+.lead-picker-options { display: grid; max-height: 190px; overflow-y: auto; border: 1px solid #e4e8f0; border-radius: 7px; background: #fff; }
+.lead-picker-options button { display: grid; gap: 2px; padding: 8px 11px; border: 0; border-bottom: 1px solid #f0f2f7; background: none; text-align: left; font: inherit; font-size: 10px; cursor: pointer; }
+.lead-picker-options button:hover, .lead-picker-options button:focus-visible { background: #f3f6ff; }
+.lead-picker-options small { color: #8a95a8; }
+.lead-picker-hint { padding: 8px 11px; color: #8a95a8; font-size: 9px; }
+.lead-picker-new { display: grid; gap: 8px; padding: 10px; border: 1px dashed #d8deea; border-radius: 7px; background: #fbfcff; }
+.lead-picker-new .lead-picker-hint { padding: 0; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
 .field-wide { grid-column: 1 / -1; }
 .lead-form-list-create { display: flex; align-items: end; gap: 8px; }
@@ -1252,3 +1268,52 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .pt-campaign-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .pt-new-campaign { display: flex; gap: 8px; margin-top: 10px; }
 .pt-new-campaign input { flex: 1; min-width: 0; }
+
+/* Kampagner: calendar and e-mail settings */
+.cs-list { display: grid; gap: 12px; }
+.cs-card { padding: 0; overflow: hidden; }
+.cs-card > .skeleton, .cs-card > .fb-muted { margin: 18px; display: block; }
+.cs-notice { display: flex; gap: 10px; align-items: flex-start; padding: 13px 15px; margin-bottom: 12px; color: #6b5a2e; background: #fffaf0; border-color: #f2e3c2; }
+.cs-notice p { margin: 0; font-size: 11px; line-height: 1.5; }
+.cs-head { width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 18px; border: 0; background: none; color: #2c3954; font: inherit; text-align: left; cursor: pointer; }
+.cs-head strong { font-size: 13px; }
+.cs-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 99px; color: #8a95a8; background: #f2f4f8; font-size: 10px; }
+.cs-badge.cs-on { color: #23704f; background: #e8f6ef; }
+.cs-form { display: grid; gap: 16px; padding: 0 18px 18px; border-top: 1px solid #eef1f6; }
+.cs-form fieldset { display: grid; gap: 12px; margin: 14px 0 0; padding: 0; border: 0; }
+.cs-form legend { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: #2c3954; font-size: 12px; font-weight: 600; }
+.cs-form label { display: grid; gap: 5px; color: #67738a; font-size: 10px; font-weight: 600; }
+.cs-form input:not([type="checkbox"]), .cs-form textarea { width: 100%; min-width: 0; padding: 9px 11px; border: 1px solid #e4e8f0; border-radius: 7px; color: #435069; background: #fff; font: inherit; font-size: 11px; font-weight: 400; }
+.cs-form textarea { resize: vertical; line-height: 1.5; }
+.cs-form small, .cs-help { color: #98a2b2; font-size: 10px; font-weight: 400; line-height: 1.5; }
+.cs-help code { margin: 0 3px; padding: 1px 5px; border-radius: 4px; background: #f2f4f8; }
+.cs-toggle { display: flex !important; align-items: center; gap: 8px; }
+.cs-copy { display: flex; gap: 8px; }
+.cs-copy input { flex: 1; }
+.cs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cs-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .cs-grid { grid-template-columns: 1fr; }
+  .cs-copy { flex-direction: column; }
+  .cs-actions .button { width: 100%; }
+}
+.meeting-calendar-link { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; }
+
+/* Kundeportal: campaigns, calendar subscription and app install */
+.cp-campaigns { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.cp-campaigns .cp-filters { margin: 0; }
+.cp-subscribe { position: relative; }
+.cp-subscribe-menu { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); width: min(320px, calc(100vw - 32px)); display: grid; gap: 10px; padding: 14px; border: 1px solid #e4e8f0; border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(19, 29, 55, .12); }
+.cp-subscribe-menu p { margin: 0; color: #67738a; font-size: 11px; line-height: 1.5; }
+.cp-subscribe-row { display: grid; gap: 6px; }
+.cp-subscribe-row .text-button { display: inline-flex; align-items: center; gap: 5px; justify-self: start; }
+.cp-install { position: relative; display: inline-flex; }
+.cp-install .button, .cp-subscribe .button { display: inline-flex; align-items: center; gap: 6px; }
+.cp-install-help { position: absolute; z-index: 20; right: 0; top: calc(100% + 6px); width: 230px; padding: 10px 12px; border: 1px solid #e4e8f0; border-radius: 9px; color: #536078; background: #fff; box-shadow: 0 12px 30px rgba(19, 29, 55, .12); font-size: 11px; line-height: 1.5; }
+.cp-auth-install { display: flex; justify-content: center; margin-top: 14px; }
+.cp-auth-install .cp-install-help { right: auto; left: 50%; transform: translateX(-50%); }
+@media (max-width: 640px) {
+  .cp-campaigns { align-items: stretch; flex-direction: column; }
+  .cp-subscribe-menu { left: 0; right: auto; }
+}
