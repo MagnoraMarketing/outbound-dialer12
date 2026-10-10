@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { apiError, readJson, requireContext, writeAudit } from "@/lib/http";
 import { isLeadStatus, normalizePhone } from "@/lib/leads";
@@ -90,7 +91,12 @@ export async function POST(request: Request) {
   if (campaignError || !campaign) {
     return apiError("Kampagnen blev ikke fundet eller er ikke tildelt dig.", campaignError ? 500 : 404);
   }
-  const { data, error } = await context.supabase.from("leads").insert({
+  // Insert without RETURNING: the leads read policy (can_access_lead) looks the row
+  // up by id and cannot see it during its own INSERT, so "insert … select" is
+  // always rejected. Read the row back in a separate query instead.
+  const id = randomUUID();
+  const { error } = await context.supabase.from("leads").insert({
+    id,
     team_id: context.profile.team_id,
     company_name: companyName,
     phone,
@@ -108,11 +114,12 @@ export async function POST(request: Request) {
     campaign_id: campaign.id,
     lead_list_id: leadListId,
     created_by: context.user.id,
-  }).select().single();
+  });
   if (error) {
-    console.error("Lead creation failed", error.message);
+    console.error("Lead creation failed", error.code, error.message);
     return apiError("Virksomheden kunne ikke oprettes.", 400);
   }
-  await writeAudit(context, "created", "lead", data.id);
-  return NextResponse.json({ data }, { status: 201 });
+  const { data } = await context.supabase.from("leads").select("*").eq("id", id).maybeSingle();
+  await writeAudit(context, "created", "lead", id);
+  return NextResponse.json({ data: data ?? { id, company_name: companyName, phone, campaign_id: campaign.id, lead_list_id: leadListId } }, { status: 201 });
 }
