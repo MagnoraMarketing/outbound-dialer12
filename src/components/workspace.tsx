@@ -1227,11 +1227,29 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
-  function readCsv(file?: File) {
+  async function decodeCsv(file: File) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      // Excel on Windows saves CSV as Windows-1252, which breaks æ, ø and å as UTF-8.
+      return new TextDecoder("windows-1252").decode(bytes);
+    }
+  }
+
+  async function readCsv(file?: File) {
     if (!file) return;
     setCsvBusy(true);
     setCsvErrors([]);
-    Papa.parse<CsvRow>(file, {
+    let text: string;
+    try {
+      text = await decodeCsv(file);
+    } catch {
+      setError("CSV-filen kunne ikke læses.");
+      setCsvBusy(false);
+      return;
+    }
+    Papa.parse<CsvRow>(text, {
       header: true,
       skipEmptyLines: "greedy",
       transformHeader: (header) => header.trim(),
@@ -1253,10 +1271,6 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           if (match) mapping[field.key] = match;
         }
         setCsvMapping(mapping);
-        setCsvBusy(false);
-      },
-      error: (parseError) => {
-        setError(parseError.message);
         setCsvBusy(false);
       },
     });
@@ -1652,7 +1666,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             onNewCampaignName={setNewCampaignName} onNewLeadListName={setNewLeadListName}
             onCreateCampaign={() => void createCampaign()} onCreateLeadList={() => void createLeadList()}
             fileRef={fileRef} onFile={readCsv} onMapping={(key, value) => setCsvMapping((current) => ({ ...current, [key]: value }))}
-            onImport={importCsv} onDrop={(file) => readCsv(file)}
+            onImport={importCsv} onDrop={(file) => void readCsv(file)}
           />}
           {page === "team" && <TeamView
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}

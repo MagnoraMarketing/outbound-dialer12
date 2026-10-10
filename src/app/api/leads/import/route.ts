@@ -58,7 +58,8 @@ export async function POST(request: Request) {
     if (!row.company_name || typeof row.company_name !== "string") {
       errors.push({ row: rowNumber, reason: "Firmanavn mangler" });
     } else if (!phone) {
-      errors.push({ row: rowNumber, reason: "Ugyldigt telefonnummer" });
+      const hasPhone = typeof row.phone === "string" && row.phone.trim() !== "";
+      errors.push({ row: rowNumber, reason: hasPhone ? `Ugyldigt telefonnummer (${(row.phone as string).slice(0, 40)})` : "Telefonnummer mangler" });
     } else if (phones.has(phone) || companies.has(normalizedCompany)) {
       errors.push({ row: rowNumber, reason: "Virksomhed eller telefonnummer findes allerede i filen" });
     } else {
