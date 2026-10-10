@@ -1712,7 +1712,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           />}
           {page === "feedback" && profile.role === "admin" && <AdminFeedbackView
             meetings={adminFeedback} campaigns={campaigns} loading={loading} onOpenPartners={() => setPage("partners")} />}
-          {page === "campaigns" && profile.role === "admin" && <CampaignsView onNotice={setNotice} />}
+          {page === "campaigns" && profile.role === "admin" && <CampaignsView onNotice={setNotice} onAddLeads={(campaignId) => { setSelectedCampaignId(campaignId); setSelectedLeadListId(""); setPage("import"); }} />}
           {page === "partners" && profile.role === "admin" && <PartnersView
             partners={partnerData.data} campaigns={partnerData.campaigns} loading={loading}
             onCreatePartner={async (input) => {
