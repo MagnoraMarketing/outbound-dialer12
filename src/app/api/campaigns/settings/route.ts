@@ -18,10 +18,13 @@ export async function GET() {
     return apiError("Kampagnerne kunne ikke hentes.", 500);
   }
   const base = siteUrl();
+  const counts = await Promise.all((data ?? []).map((campaign) => context.supabase.from("leads")
+    .select("id", { count: "exact", head: true }).eq("campaign_id", campaign.id).is("deleted_at", null)));
   return NextResponse.json({
     email_configured: emailProviderConfigured(),
-    data: (data ?? []).map(({ calendar_token: token, ...campaign }) => ({
+    data: (data ?? []).map(({ calendar_token: token, ...campaign }, index) => ({
       ...campaign,
+      lead_count: counts[index].count ?? 0,
       feed_url: `${base}/api/calendar/${token}.ics`,
     })),
   });
