@@ -79,6 +79,30 @@ export async function PATCH(request: Request) {
   const body = await readJson(request);
 
   if (isUuid(body?.campaign_id)) {
+    // A number picked straight from the telephony account is added to the
+    // team first, so the admin does not have to add it in a separate step.
+    if (typeof body.provider_id === "string" && body.provider_id) {
+      let picked: ProviderNumber | undefined;
+      try {
+        picked = (await listProviderNumbers()).find((item) => item.id === body.provider_id);
+      } catch (error) {
+        return apiError(error instanceof Error ? error.message : "Numrene kunne ikke kontrolleres.", 502);
+      }
+      const number = normalizeCallerNumber(picked?.phone_number);
+      if (!picked || !number) return apiError("Nummeret findes ikke på telefonikontoen.", 404);
+      const { data: existing } = await admin.from("phone_numbers").select("id").eq("team_id", teamId).eq("number", number).maybeSingle();
+      let numberId = existing?.id as string | undefined;
+      if (!numberId) {
+        const { count } = await admin.from("phone_numbers").select("id", { count: "exact", head: true }).eq("team_id", teamId);
+        const { data: inserted, error: insertError } = await admin.from("phone_numbers").insert({
+          team_id: teamId, number, provider_id: picked.id, label: "", created_by: context.user.id, is_default: (count ?? 0) === 0,
+        }).select("id").single();
+        if (insertError || !inserted) return apiError("Nummeret kunne ikke tilføjes.", 500);
+        numberId = inserted.id;
+        await writeAudit(context, "phone_number_added", "phone_number", inserted.id, { number });
+      }
+      body.phone_number_id = numberId;
+    }
     const phoneNumberId = body.phone_number_id === null ? null : isUuid(body.phone_number_id) ? body.phone_number_id : undefined;
     if (phoneNumberId === undefined) return apiError("Vælg et nummer eller standardnummeret.");
     if (phoneNumberId) {
