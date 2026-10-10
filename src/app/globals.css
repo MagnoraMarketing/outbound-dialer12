@@ -1236,3 +1236,14 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .wb-latest small { color: var(--muted); text-align: right; }
 @media (max-width: 900px) { .wb-view { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .games-switch { grid-template-columns: 1fr; } .wb-pad { display: grid; } }
+
+/* Outbound subscription (admin) */
+.sub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.sub-card { padding: 22px; display: grid; gap: 12px; align-content: start; }
+.sub-card h2 { margin: 0; display: flex; align-items: center; gap: 8px; }
+.sub-card .fb-badge { justify-self: start; }
+.sub-card .button { justify-self: start; }
+.sub-lines { margin: 0; display: grid; gap: 6px; }
+.sub-lines div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
+.sub-lines dt { color: var(--muted); }
+.sub-lines dd { margin: 0; font-weight: 600; }

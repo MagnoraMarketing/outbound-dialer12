@@ -8,7 +8,7 @@ import {
   CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, PhoneForwarded, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
-  Crown, Eye, Target, Timer, Trash2, Users, X,
+  CreditCard, Crown, Eye, Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
 } from "@/components/meeting-feedback-views";
 import { PartnersView, type PartnerData } from "@/components/partners-view";
 import { GamesHub } from "@/components/game/games-hub";
+import { SubscriptionView } from "@/components/subscription-view";
 import { EarningsApprovals } from "@/components/earnings-approvals";
 import { PhoneNumbersView } from "@/components/phone-numbers-view";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
@@ -93,7 +94,7 @@ type AdminOverview = {
   totals: { calls: number; connected: number; meetings: number; talk_time: number; users: number };
   campaigns: { id: string; name: string; calls: number; connected: number; meetings: number; talk_time: number }[];
 };
-type Page = "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "numbers" | "game" | "messages" | "settings";
+type Page = "subscription" | "dashboard" | "budget" | "leads" | "dialer" | "dialpad" | "callbacks" | "meetings" | "history" | "import" | "team" | "partners" | "feedback" | "earnings" | "numbers" | "game" | "messages" | "settings";
 type CsvField = "company_name" | "cvr" | "contact_person" | "phone" | "email" | "website" | "address" | "city" | "industry" | "employee_count" | "notes";
 type CsvRow = Record<string, string>;
 
@@ -126,6 +127,7 @@ const navGroups: { label: string; items: { id: Page; title: string; icon: typeof
     { id: "feedback", title: "Mødefeedback", icon: ClipboardCheck },
     { id: "earnings", title: "Godkend indtjening", icon: BadgeCheck },
     { id: "numbers", title: "Telefonnumre", icon: PhoneForwarded },
+    { id: "subscription", title: "Abonnement", icon: CreditCard },
     { id: "settings", title: "Indstillinger", icon: Settings2 },
   ] },
   { label: "SPIL", items: [
@@ -1504,7 +1506,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
 
   const pageTitle: Record<Page, string> = {
     dashboard: "Overblik", budget: "Budget", leads: "Virksomheder", dialer: "Opkald", dialpad: "Dialpad", callbacks: "Callbacks",
-    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Spil",
+    meetings: "Møder", history: "Opkaldshistorik", import: "Importer leads", team: "Dit team", partners: "Samarbejdspartnere", feedback: "Mødefeedback", earnings: "Godkend indtjening", numbers: "Telefonnumre", game: "Spil", subscription: "Abonnement",
     messages: "Beskeder", settings: "Indstillinger",
   };
   const unreadMessages = teamMessages.filter((message) =>
@@ -1530,7 +1532,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
               && (item.id !== "leads" || profile.role !== "salesperson")
               && (item.id !== "team" || profile.role === "admin")
               && (item.id !== "dialpad" || profile.role === "admin" || profile.can_dial_manual !== false)
-              && (!["partners", "feedback", "earnings", "numbers"].includes(item.id) || profile.role === "admin"));
+              && (!["partners", "feedback", "earnings", "numbers", "subscription"].includes(item.id) || profile.role === "admin"));
             return items.length ? <div className="nav-group" key={group.label}>
             <span className="nav-label">{group.label}</span>
             {items.map(({ id, title, icon: Icon }) => (
@@ -1669,6 +1671,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           {page === "earnings" && profile.role === "admin" && <EarningsApprovals />}
           {page === "numbers" && profile.role === "admin" && <PhoneNumbersView />}
           {page === "game" && <GamesHub />}
+          {page === "subscription" && profile.role === "admin" && <SubscriptionView />}
           {page === "settings" && <SettingsView user={user} profile={profile} onChangePassword={async (password) => {
             if (!supabase) throw new Error("Login er ikke konfigureret.");
             const { error: passwordError } = await supabase.auth.updateUser({ password });

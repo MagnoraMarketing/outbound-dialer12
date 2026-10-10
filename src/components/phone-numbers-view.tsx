@@ -110,9 +110,21 @@ export function PhoneNumbersView() {
       {state?.campaigns.length ? <div className="table-scroll"><table className="ea-table"><thead><tr><th>Kampagne</th><th>Udgående nummer</th></tr></thead><tbody>
         {state.campaigns.map((campaign) => <tr key={campaign.id}><td><strong>{campaign.name}</strong></td><td>
           <select value={campaign.phone_number_id ?? ""} disabled={busy} aria-label={`Nummer for ${campaign.name}`}
-            onChange={(event) => void act(() => numbersApi("/api/admin/phone-numbers", { method: "PATCH", body: JSON.stringify({ campaign_id: campaign.id, phone_number_id: event.target.value || null }) }), `Nummeret for ${campaign.name} er gemt.`)}>
+            onChange={(event) => {
+              const value = event.target.value;
+              const payload = value.startsWith("provider:")
+                ? { campaign_id: campaign.id, provider_id: value.slice("provider:".length) }
+                : { campaign_id: campaign.id, phone_number_id: value || null };
+              void act(() => numbersApi("/api/admin/phone-numbers", { method: "PATCH", body: JSON.stringify(payload) }), `Nummeret for ${campaign.name} er gemt.`);
+            }}>
             <option value="">{fallback ? `Standardnummer (${fallback})` : "Intet nummer – vælg et"}</option>
-            {state.data.map((number) => <option key={number.id} value={number.id}>{number.number}{number.label ? ` · ${number.label}` : ""}</option>)}
+            {state.data.length > 0 && <optgroup label="Teamets numre">
+              {state.data.map((number) => <option key={number.id} value={number.id}>{number.number}{number.label ? ` · ${number.label}` : ""}</option>)}
+            </optgroup>}
+            {state.provider.numbers.some((number) => !added.has(number.phone_number) && number.status === "active") && <optgroup label="Købt i Telnyx">
+              {state.provider.numbers.filter((number) => !added.has(number.phone_number) && number.status === "active").map((number) =>
+                <option key={number.id} value={`provider:${number.id}`}>{number.phone_number}</option>)}
+            </optgroup>}
           </select>
         </td></tr>)}
       </tbody></table></div> : <p className="fb-muted">{state ? "Opret en kampagne under Importer leads først." : "Henter …"}</p>}
