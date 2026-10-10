@@ -1170,3 +1170,4 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .ea-fee-form label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-soft); }
 .ea-fee-form input { width: 140px; }
 @media (max-width: 640px) { .system-fee-figures { grid-template-columns: 1fr; } }
+.view-switch { margin-bottom: 10px; justify-content: center; gap: 8px; }

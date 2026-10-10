@@ -8,7 +8,7 @@ import {
   CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, PhoneForwarded, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
-  Target, Timer, Trash2, Users, X,
+  Eye, Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -180,6 +180,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [adminAccount, setAdminAccount] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "signup" | "forgot" | "recovery">("login");
   const [authError, setAuthError] = useState("");
@@ -459,6 +460,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         // One account can use both links: /admin opens the admin workspace and
         // / shows the same account exactly as a seller sees the system.
         const loaded = data as Profile;
+        setAdminAccount(loaded.role === "admin");
         setProfile(!adminEntry && loaded.role === "admin" ? { ...loaded, role: "salesperson" } : loaded);
       } else {
         // Customer logins have no team profile; send them to their own portal.
@@ -1520,6 +1522,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           })}
         </nav>
         <div className="sidebar-bottom">
+          {adminAccount && <button className="button button-secondary button-wide view-switch" onClick={() => { window.location.href = adminEntry ? "/" : "/admin"; }}>
+            {adminEntry ? <><Eye size={15} /> Se som sælger</> : <><Settings2 size={15} /> Gå til admin</>}
+          </button>}
           <div className="help-card"><span className="help-icon"><CircleHelp size={16} /></span><strong>Har du brug for en hånd?</strong><span>Vi er lige her, når du har brug for os.</span><a href="mailto:hej@nordcall.dk">Skriv til support <ArrowUpRight size={13} /></a></div>
           <button className="profile-row" onClick={logout}>
             <div className="avatar">{initials(profile.full_name || user.email || "S")}</div>
