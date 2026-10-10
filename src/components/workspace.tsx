@@ -936,12 +936,14 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     const form = new FormData(event.currentTarget);
     setInviteError("");
     try {
-      await api("/api/team/invite", { method: "POST", body: JSON.stringify({
+      const result = await api<{ existing?: boolean }>("/api/team/invite", { method: "POST", body: JSON.stringify({
         full_name: String(form.get("full_name") ?? ""),
         email: String(form.get("email") ?? ""),
       }) });
       setModal(null);
-      setNotice("Invitationen er sendt.");
+      setNotice(result?.existing
+        ? "Kollegaen havde allerede et login og er nu tilføjet som sælger. De logger ind med deres nuværende adgangskode."
+        : "Invitationen er sendt.");
       void loadPageData("team");
     } catch (inviteFailure) {
       setInviteError(inviteFailure instanceof Error ? inviteFailure.message : "Invitationen kunne ikke sendes.");
@@ -1679,7 +1681,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           }} />}
         </div>
       </main>
-      {modal && <Modal title={modal === "lead" ? "Tilføj virksomhed" : modal === "callback" ? "Planlæg callback" : "Book et møde"} onClose={() => setModal(null)}>
+      {modal && <Modal title={modal === "lead" ? "Tilføj virksomhed" : modal === "callback" ? "Planlæg callback" : modal === "invite" ? "Invitér en kollega" : "Book et møde"} onClose={() => setModal(null)}>
         {modal === "lead" && <form className="modal-form" onSubmit={createLead}>
           <div className="form-grid">
             <label>Kampagne *<select required value={leadFormCampaignId} onChange={(event) => { setLeadFormCampaignId(event.target.value); setLeadFormLeadListId(""); }}>
@@ -1723,7 +1725,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           <ModalActions onCancel={() => setModal(null)} submit="Book møde" />
         </form>}
         {modal === "invite" && <form className="modal-form" onSubmit={inviteMember}>
-          <p className="modal-description">Din kollega modtager en sikker invitation på e-mail og tilføjes til dit team som sælger.</p>
+          <p className="modal-description">Din kollega modtager en sikker invitation på e-mail og tilføjes til dit team som sælger. Har kollegaen allerede et login med e-mailen, tilføjes det direkte.</p>
           <label>Navn<input name="full_name" required maxLength={120} placeholder="F.eks. Mikkel Sørensen" /></label>
           <label>Arbejdsmail<input name="email" type="email" required placeholder="mikkel@virksomhed.dk" /></label>
           {inviteError && <p className="form-error">{inviteError}</p>}

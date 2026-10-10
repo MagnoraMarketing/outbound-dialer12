@@ -20,6 +20,25 @@ export async function POST(request: Request) {
       data: { full_name: fullName, team_id: context.profile.team_id, nordcall_app: true },
       redirectTo: inviteRedirect.toString(),
     });
+    // The project is shared with aibooking, so the colleague may already have
+    // a login. Add that login to the team instead; they sign in with their
+    // existing password.
+    if (error && (error.code === "email_exists" || /already been registered/i.test(error.message))) {
+      const { data: added, error: addError } = await admin.rpc("add_existing_user_to_team", {
+        p_email: email, p_team: context.profile.team_id, p_full_name: fullName,
+      });
+      const outcome = (added as { result?: string; user_id?: string } | null)?.result;
+      if (addError || !outcome) {
+        console.error("Adding existing user to team failed", addError?.message);
+        return apiError("Brugeren findes allerede, men kunne ikke tilføjes til teamet.", 500);
+      }
+      if (outcome === "already_member") return apiError("Brugeren er allerede med i dit team.", 409);
+      if (outcome === "other_team") return apiError("Brugeren er allerede med i et andet team.", 409);
+      if (outcome === "partner_account") return apiError("E-mailen bruges af et samarbejdspartner-login og kan ikke blive sælger.", 409);
+      if (outcome !== "added") return apiError("Brugeren kunne ikke tilføjes til teamet.", 500);
+      await writeAudit(context, "team_member_added_existing", "profile", (added as { user_id: string }).user_id, { email });
+      return NextResponse.json({ success: true, existing: true }, { status: 201 });
+    }
     if (error || !data.user) {
       console.error("Team invitation failed", error?.message);
       return apiError("Invitationen kunne ikke sendes. Kontrollér e-mailopsætningen.", 502);
