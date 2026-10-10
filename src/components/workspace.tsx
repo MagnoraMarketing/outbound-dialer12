@@ -456,7 +456,10 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           ? "Systemet er ikke klar endnu. Kontakt din administrator."
           : "Brugerprofilen kunne ikke indlæses. Prøv igen, eller kontakt din administrator.");
       } else if (data) {
-        setProfile(data as Profile);
+        // One account can use both links: /admin opens the admin workspace and
+        // / shows the same account exactly as a seller sees the system.
+        const loaded = data as Profile;
+        setProfile(!adminEntry && loaded.role === "admin" ? { ...loaded, role: "salesperson" } : loaded);
       } else {
         // Customer logins have no team profile; send them to their own portal.
         const customerCheck = await fetch("/api/customer/me").catch(() => null);
