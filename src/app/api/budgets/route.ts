@@ -41,9 +41,11 @@ export async function GET() {
       return time >= bounds.weekStart.getTime() && time < bounds.nextWeek.getTime();
     });
     const weeklyMeetings = weeklyEvents.filter((event) => event.event_type === "meeting").length;
-    const weeklySales = weeklyEvents.filter((event) => event.event_type === "sale").length;
+    // An upsell (mersalg) is a sale to an existing customer and counts as a sale.
+    const isSale = (event: { event_type: string }) => event.event_type === "sale" || event.event_type === "upsell";
+    const weeklySales = weeklyEvents.filter(isSale).length;
     const monthlyMeetings = events.filter((event) => event.event_type === "meeting").length;
-    const monthlySales = events.filter((event) => event.event_type === "sale").length;
+    const monthlySales = events.filter(isSale).length;
     const weeklyMeetingTarget = target.weekly_meeting_target || 0;
     const weeklySaleTarget = target.weekly_sale_target || 0;
     const monthlyExpectedCommission = (weeklyMeetingTarget * Number(target.commission_per_meeting)
@@ -207,7 +209,7 @@ export async function POST(request: Request) {
   const { context } = result;
   const body = await readJson(request);
   if (!body || typeof body.campaign_id !== "string"
-    || (body.event_type !== "meeting" && body.event_type !== "sale")) {
+    || !["meeting", "sale", "upsell"].includes(String(body.event_type))) {
     return apiError("Vælg en kampagne og en gyldig aktivitet.");
   }
   const [campaign, target] = await Promise.all([
@@ -223,7 +225,8 @@ export async function POST(request: Request) {
   }
   if (!campaign.data) return apiError("Kampagnen blev ikke fundet.", 404);
   if (!target.data) return apiError("Gem først et budget for kampagnen.");
-  if (target.data.activity_mode !== "both" && target.data.activity_mode !== body.event_type) {
+  const activity = body.event_type === "upsell" ? "sale" : body.event_type;
+  if (target.data.activity_mode !== "both" && target.data.activity_mode !== activity) {
     return apiError("Denne aktivitetstype er ikke slået til for kampagnens budget.");
   }
   const { data, error } = await context.supabase.from("budget_events").insert({

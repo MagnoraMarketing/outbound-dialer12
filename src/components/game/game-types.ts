@@ -22,11 +22,11 @@ export type Transaction = { id: string; kind: string; amount: number; balance_af
 export type GameState = {
   profile: {
     company_name: string; level: number; xp: number; balance: number; lifetime_earned: number; verified_earnings_dkk: number;
-    market_unlocked_at: string | null; public_profile: boolean; company_value: number; net_worth: number;
+    market_ready_at: string | null; market_unlocked_at: string | null; public_profile: boolean; company_value: number; net_worth: number;
   };
-  stats: { approved_meetings: number; approved_sales: number; owned_assets: number };
-  market: { threshold_dkk: number; unlocked: boolean; unlocked_at: string | null; remaining_dkk: number; percent: number };
-  rewards: { meeting_approved: number; meeting_held: number; sale_approved: number };
+  stats: { approved_meetings: number; approved_sales: number; approved_upsells: number; owned_assets: number };
+  market: { threshold_dkk: number; ready: boolean; ready_at: string | null; unlocked: boolean; unlocked_at: string | null; remaining_dkk: number; percent: number };
+  rewards: { meeting_approved: number; meeting_held: number; sale_approved: number; upsell_approved: number };
   levels: GameLevel[];
   assets: GameAsset[];
   inventory: InventoryItem[];

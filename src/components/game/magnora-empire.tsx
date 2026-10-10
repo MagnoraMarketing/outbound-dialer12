@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  Award, Building2, Check, Coins, Crown, Gem, History, Lock, Pencil, Search, ShoppingBag, Sparkles, Store, Target, Trophy, TrendingUp, X,
+  Award, Building2, Check, LockOpen, Coins, Crown, Gem, History, Lock, Pencil, Search, ShoppingBag, Sparkles, Store, Target, Trophy, TrendingUp, X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IsoCity } from "@/components/game/iso-city";
@@ -29,6 +29,7 @@ export function MagnoraEmpire() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [levelUp, setLevelUp] = useState<GameLevel | null>(null);
   const [editingName, setEditingName] = useState(false);
+  const [marketView, setMarketView] = useState<"listings" | "mine">("listings");
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +67,25 @@ export function MagnoraEmpire() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function unlockMarket() {
+    setBusy(true);
+    setError("");
+    try {
+      await gameApi("/api/game/market/unlock", { method: "POST" });
+      await load();
+      setNotice("Magnora Market er låst op! Start din første butik ved at sætte et aktiv til salg.");
+    } catch (unlockError) {
+      setError(unlockError instanceof Error ? unlockError.message : "Markedet kunne ikke låses op.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openMarket(view: "listings" | "mine") {
+    setMarketView(view);
+    setTab("market");
   }
 
   async function saveProfile(changes: { company_name?: string; public_profile?: boolean }) {
@@ -127,17 +147,25 @@ export function MagnoraEmpire() {
       </div>
     </section>
 
-    <section className={`mg-unlock ${market.unlocked ? "mg-unlock-open" : ""}`}>
-      <div className="mg-unlock-icon">{market.unlocked ? <Store size={22} /> : <Lock size={22} />}</div>
+    <section className={`mg-unlock ${market.unlocked ? "mg-unlock-open" : market.ready ? "mg-unlock-ready" : ""}`}>
+      <div className="mg-unlock-icon">{market.unlocked ? <Store size={22} /> : market.ready ? <LockOpen size={22} /> : <Lock size={22} />}</div>
       <div className="mg-unlock-body">
-        <span className="eyebrow">{market.unlocked ? "MAGNORA MARKET ER ÅBEN" : "UNLOCK MAGNORA MARKET"}</span>
+        <span className="eyebrow">{market.unlocked ? "MAGNORA MARKET ER ÅBEN" : market.ready ? "DU KAN LÅSE MAGNORA MARKET OP" : "UNLOCK MAGNORA MARKET"}</span>
         <strong>{dkk(profile.verified_earnings_dkk)} / {dkk(market.threshold_dkk)}</strong>
         <div className="mg-bar mg-bar-gold"><i style={{ width: `${market.percent}%` }} /></div>
         <small>{market.unlocked
           ? `Låst op ${new Date(market.unlocked_at ?? "").toLocaleDateString("da-DK")}. Adgangen er permanent.`
+          : market.ready ? `Du har rundet ${dkk(market.threshold_dkk)} i godkendt salgsindtjening. Lås markedet op, og start din første butik.`
           : `${dkk(market.remaining_dkk)} tilbage · ${market.percent.toLocaleString("da-DK")} % gennemført. Tæller kun godkendt salgsindtjening – ikke virtuelle kroner.`}</small>
       </div>
-      <button className="button mg-button-gold" onClick={() => setTab("market")}>{market.unlocked ? "Gå til markedet" : "Se markedet"}</button>
+      {market.unlocked
+        ? <div className="mg-unlock-actions">
+          {!state.inventory.some((item) => item.listed) && <button className="button mg-button-gold" onClick={() => openMarket("mine")}><Store size={15} /> Start din første butik</button>}
+          <button className="button button-secondary" onClick={() => openMarket("listings")}>Gå til markedet</button>
+        </div>
+        : market.ready
+          ? <button className="button mg-button-gold" disabled={busy} onClick={() => void unlockMarket()}><LockOpen size={15} /> {busy ? "Låser op …" : "Lås Magnora Market op"}</button>
+          : <button className="button mg-button-gold" onClick={() => openMarket("listings")}>Se markedet</button>}
     </section>
 
     <nav className="mg-tabs" role="tablist" aria-label="Spillets sektioner">
@@ -168,6 +196,7 @@ export function MagnoraEmpire() {
             <li><span>Kvalificeret møde godkendt af admin</span><strong>+{vkr(state.rewards.meeting_approved)}</strong></li>
             <li><span>Møde afholdt og godkendt af partneren</span><strong>+{vkr(state.rewards.meeting_held)}</strong></li>
             <li><span>Betalende kunde godkendt af admin</span><strong>+{vkr(state.rewards.sale_approved)}</strong></li>
+            <li><span>Mersalg godkendt af admin</span><strong>+{vkr(state.rewards.upsell_approved)}</strong></li>
             <li><span>Missioner og achievements</span><strong>Bonus</strong></li>
           </ul>
           <p className="mg-fineprint">Virtuelle kroner er spilvaluta og kan ikke udbetales. De påvirker ikke din provision.</p>
@@ -188,7 +217,7 @@ export function MagnoraEmpire() {
 
     {tab === "shop" && <ShopView state={state} onBuy={setConfirmAsset} />}
     {tab === "missions" && <MissionsView state={state} />}
-    {tab === "market" && <MarketView state={state} assetByKey={assetByKey} onChanged={load} onPublicChange={(value) => void saveProfile({ public_profile: value })} />}
+    {tab === "market" && <MarketView key={marketView} initialView={marketView} state={state} assetByKey={assetByKey} onChanged={load} onPublicChange={(value) => void saveProfile({ public_profile: value })} />}
     {tab === "history" && <section className="panel mg-history">
       <span className="panel-eyebrow">TRANSAKTIONER · SENESTE 30</span>
       {state.transactions.length ? <ul>{state.transactions.map((transaction) => <li key={transaction.id}>

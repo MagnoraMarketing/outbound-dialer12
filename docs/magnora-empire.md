@@ -44,8 +44,10 @@ One booking can therefore earn all three meeting/sale rewards, but each only onc
 
 ## Magnora Market access
 
-- **Rule:** the market unlocks when `verified_earnings_dkk >= game_config.market_unlock_dkk` (100.000 by default).
-- **Permanent access:** `nordcall.game_sync` stores `market_unlocked_at` the first time the threshold is reached. It is never cleared, so a later correction to an approval does not remove access.
+- **Rule:** a player becomes ready when `verified_earnings_dkk >= game_config.market_unlock_dkk` (50.000 by default).
+- **Ready, then unlock:** `nordcall.game_sync` stores `market_ready_at` the first time the threshold is reached. The whole team sees a banner. The player then presses "Lås Magnora Market op" (`nordcall.game_market_unlock`), which sets `market_unlocked_at`. The player then starts their first shop by listing an asset.
+- **Permanent access:** neither timestamp is ever cleared, so a later correction to an approval does not remove access.
+- **Upsell (mersalg):** sellers register an upsell in Budget. An approved upsell gives `reward_upsell_approved` (2.000 vkr. by default), and the first one completes the "First Upsell" mission (2.500 vkr.).
 - **Server-side checks:** every market route checks access on the server, and the database functions check it again. Virtual balance, company value and trades in the game never count toward the threshold.
 
 ## Levels and assets

@@ -8,7 +8,7 @@ import {
   CalendarClock, CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardCheck, Gamepad2, PhoneForwarded, Handshake, BadgeCheck, ChevronLeft, ChevronRight,
   CircleHelp, Clock3, FileSpreadsheet, Filter, Headphones, LayoutDashboard, LogOut, Menu,
   MessageSquareText, MoreHorizontal, Phone, PhoneCall, Plus, Search, Settings2, SlidersHorizontal, Sparkles,
-  Eye, Target, Timer, Trash2, Users, X,
+  Crown, Eye, Target, Timer, Trash2, Users, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -44,7 +44,7 @@ type BudgetEntry = {
   weekly_meetings: number; monthly_meetings: number; weekly_sales: number; monthly_sales: number;
   monthly_commission: number; expected_monthly_commission: number; updated_at: string;
 };
-type BudgetActivity = { id: string; user_id: string; campaign_id: string; event_type: "meeting" | "sale"; created_at: string };
+type BudgetActivity = { id: string; user_id: string; campaign_id: string; event_type: "meeting" | "sale" | "upsell"; created_at: string };
 type CampaignBudgetSettings = {
   activity_mode: "meeting" | "sale" | "both";
   commission_per_meeting: number;
@@ -59,6 +59,7 @@ type BudgetReport = {
   activities: BudgetActivity[];
   system_fee?: { fee_dkk: number; users: Record<string, { gross: number; covered: number; own: number }> };
 };
+type Milestone = { user_id: string; name: string; company_name: string; ready_at: string; unlocked: boolean; own: boolean };
 type TeamMessage = {
   id: string; broadcast_id: string; recipient_user_id: string; sent_by: string;
   campaign_id: string | null; lead_list_id: string | null;
@@ -181,6 +182,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [adminAccount, setAdminAccount] = useState(false);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [milestoneThreshold, setMilestoneThreshold] = useState(50000);
+  const [dismissedMilestones, setDismissedMilestones] = useState<string[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState<"login" | "signup" | "forgot" | "recovery">("login");
   const [authError, setAuthError] = useState("");
@@ -484,6 +488,23 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       listener.subscription.unsubscribe();
     };
   }, [adminEntry]);
+
+  // Team members who passed the Magnora Market threshold; shown to everyone on the team.
+  useEffect(() => {
+    if (!user || !profile?.team_id) return;
+    try { setDismissedMilestones(JSON.parse(window.localStorage.getItem("nordcall-milestones-seen") ?? "[]")); } catch { /* storage unavailable */ }
+    fetch("/api/game/milestones").then((response) => response.ok ? response.json() : null)
+      .then((body: { data: Milestone[]; threshold_dkk: number } | null) => {
+        setMilestones(body?.data ?? []);
+        if (body?.threshold_dkk) setMilestoneThreshold(body.threshold_dkk);
+      }).catch(() => setMilestones([]));
+  }, [user, profile?.team_id]);
+
+  function dismissMilestone(key: string) {
+    const next = [...dismissedMilestones, key].slice(-50);
+    setDismissedMilestones(next);
+    try { window.localStorage.setItem("nordcall-milestones-seen", JSON.stringify(next)); } catch { /* storage unavailable */ }
+  }
 
   useEffect(() => {
     if (user && profile?.team_id) void loadPageData(page, search);
@@ -1018,13 +1039,14 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
-  async function recordBudgetEvent(campaignId: string, eventType: "meeting" | "sale") {
+  async function recordBudgetEvent(campaignId: string, eventType: "meeting" | "sale" | "upsell") {
     try {
       await api("/api/budgets", {
         method: "POST",
         body: JSON.stringify({ campaign_id: campaignId, event_type: eventType }),
       });
-      setNotice(eventType === "meeting" ? "Mødet er registreret i dit budget." : "Salget er registreret i dit budget.");
+      setNotice(eventType === "meeting" ? "Mødet er registreret i dit budget."
+        : eventType === "upsell" ? "Mersalget er registreret. Når admin godkender det, giver det ekstra i Magnora Empire." : "Salget er registreret i dit budget.");
       setBudgetReport(await api<BudgetReport>("/api/budgets"));
     } catch (eventError) {
       setError(eventError instanceof Error ? eventError.message : "Aktiviteten kunne ikke registreres.");
@@ -1502,7 +1524,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           <ChevronDown size={15} />
         </div>
         <nav className="side-nav" aria-label="Hovednavigation">
-          {navGroups.map((group) => {
+          {(profile.role === "admin" ? [...navGroups.filter((group) => group.label === "ADMINISTRATION"), ...navGroups.filter((group) => group.label !== "ADMINISTRATION")] : navGroups).map((group) => {
             const items = group.items.filter((item) =>
               (item.id !== "import" || profile.role === "admin")
               && (item.id !== "leads" || profile.role !== "salesperson")
@@ -1549,13 +1571,27 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         </header>
         <div className="page-content">
           {(error || notice) && <div className={`toast ${error ? "toast-error" : ""}`} role="status"><span>{error || notice}</span><button aria-label="Luk besked" onClick={() => { setError(""); setNotice(""); }}><X size={16} /></button></div>}
-          {page === "dashboard" && <DashboardView
+          {milestones.filter((milestone) => !dismissedMilestones.includes(`${milestone.user_id}:${milestone.ready_at}`)).slice(0, 3).map((milestone) =>
+            <div className="milestone-banner" role="status" key={`${milestone.user_id}:${milestone.ready_at}`}>
+              <span className="milestone-icon"><Crown size={18} /></span>
+              <div><strong>{milestone.own ? `Tillykke! Du har rundet ${formatMoney(milestoneThreshold)} i godkendt salg` : `${milestone.name} har rundet ${formatMoney(milestoneThreshold)} i godkendt salg`}</strong>
+                <span>{milestone.own
+                  ? (milestone.unlocked ? "Magnora Market er åben for dig. Start din første butik." : "Du kan nu låse Magnora Market op og starte din første butik.")
+                  : `${milestone.company_name} kan nu åbne sin butik på Magnora Market.`}</span></div>
+              <span className="milestone-actions">
+                {milestone.own && <button className="button button-primary button-small" onClick={() => setPage("game")}>{milestone.unlocked ? "Gå til markedet" : "Lås op"}</button>}
+                <button className="icon-button" aria-label="Skjul besked" onClick={() => dismissMilestone(`${milestone.user_id}:${milestone.ready_at}`)}><X size={15} /></button>
+              </span>
+            </div>)}
+          {page === "dashboard" && profile.role === "admin" && <AdminHome name={greeting} setPage={setPage} />}
+          {page === "dashboard" && profile.role === "admin" && (adminOverview
+            ? <AdminCampaignOverview overview={adminOverview} onManageTeam={() => setPage("team")} />
+            : <div className="panel empty-panel"><p>{loading ? "Henter teamets tal …" : "Teamets tal kunne ikke hentes."}</p></div>)}
+          {page === "dashboard" && profile.role !== "admin" && <DashboardView
             data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
             budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
           />}
-          {page === "dashboard" && <SellerFeedbackPanel meetings={meetings.filter((meeting) => meeting.user_id === user.id)} onOpenMeetings={() => setPage("meetings")} />}
-          {page === "dashboard" && profile.role === "admin" && adminOverview
-            && <AdminCampaignOverview overview={adminOverview} onManageTeam={() => setPage("team")} />}
+          {page === "dashboard" && profile.role !== "admin" && <SellerFeedbackPanel meetings={meetings.filter((meeting) => meeting.user_id === user.id)} onOpenMeetings={() => setPage("meetings")} />}
           {page === "budget" && <BudgetView
             report={budgetReport} loading={loading} userId={user.id} role={profile.role}
             onSave={saveCampaignBudget} onRecord={recordBudgetEvent}
@@ -1765,6 +1801,28 @@ function DashboardView({ data, loading, name, role, userId, budgets, setPage, on
   </div>;
 }
 
+// Admin front page: the things only an administrator manages, one click away.
+function AdminHome({ name, setPage }: { name: string; setPage: (page: Page) => void }) {
+  const links: { page: Page; title: string; text: string; icon: typeof LayoutDashboard }[] = [
+    { page: "team", title: "Team og sælgere", text: "Opret sælgere, roller og adgang til kampagner.", icon: Users },
+    { page: "import", title: "Kampagner og leads", text: "Opret kampagner og importér ringelister.", icon: FileSpreadsheet },
+    { page: "numbers", title: "Telefonnumre", text: "Tildel udgående numre til kampagnerne.", icon: PhoneForwarded },
+    { page: "partners", title: "Samarbejdspartnere", text: "Partnere, kampagner og kundelogins.", icon: Handshake },
+    { page: "feedback", title: "Mødefeedback", text: "Overskredne møder og partnernes status.", icon: ClipboardCheck },
+    { page: "earnings", title: "Godkend indtjening", text: "Godkend møder, salg og mersalg.", icon: BadgeCheck },
+  ];
+  return <section className="admin-home">
+    <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Hej {name}</h1>
+      <p>Her styrer du teamet, kampagnerne og alt det praktiske. Sælgerne ser kun det, du giver dem adgang til.</p></div></div>
+    <div className="admin-home-grid">{links.map(({ page, title, text, icon: Icon }) =>
+      <button key={page} className="panel admin-home-card" onClick={() => setPage(page)}>
+        <span className="admin-home-icon"><Icon size={18} /></span>
+        <span><strong>{title}</strong><small>{text}</small></span>
+        <ArrowRight size={15} />
+      </button>)}</div>
+  </section>;
+}
+
 function AdminCampaignOverview({ overview, onManageTeam }: {
   overview: AdminOverview; onManageTeam: () => void;
 }) {
@@ -1826,7 +1884,7 @@ function SystemFeeCard({ fee, split, own }: { fee: number; split?: { gross: numb
 function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
   report: BudgetReport | null; loading: boolean; userId: string; role: Profile["role"];
   onSave: (userId: string, campaignId: string, settings: CampaignBudgetSettings) => void;
-  onRecord: (campaignId: string, eventType: "meeting" | "sale") => void;
+  onRecord: (campaignId: string, eventType: "meeting" | "sale" | "upsell") => void;
 }) {
   const [selectedUserId, setSelectedUserId] = useState(userId);
   const [campaignId, setCampaignId] = useState("");
@@ -1913,6 +1971,7 @@ function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
               <div className="budget-progress-track"><i style={{ width: `${percent}%` }} /></div>
               <div className="budget-activity-foot"><span>{percent}% af ugemålet</span><span>{monthly} / {monthlyGoal} denne måned</span></div>
               <button className="button button-secondary button-small" onClick={() => onRecord(campaignId, eventType)}>+ Registrer {meeting ? "møde" : "salg"}</button>
+              {!meeting && <button className="button button-secondary button-small" title="Salg til en eksisterende kunde. Giver ekstra i Magnora Empire, når det godkendes." onClick={() => onRecord(campaignId, "upsell")}>+ Registrer mersalg</button>}
             </article>;
           })}
         </div>
@@ -1920,7 +1979,7 @@ function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
           <div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Det, der tæller med</h2></div></div>
           {visibleActivities.length ? visibleActivities.slice(0, 8).map((activity) => <div className="budget-activity-row" key={activity.id}>
             <span className={`activity-dot activity-${activity.event_type}`} />
-            <strong>{activity.event_type === "meeting" ? "Møde" : "Salg"}</strong>
+            <strong>{activity.event_type === "meeting" ? "Møde" : activity.event_type === "upsell" ? "Mersalg" : "Salg"}</strong>
             <time>{formatDate(activity.created_at, { day: "numeric", month: "short", year: "numeric" })} · {formatTime(activity.created_at)}</time>
           </div>) : <p className="budget-no-activity">Dine møder og salg bliver vist her, når de registreres.</p>}
           <small className="budget-duplicate-note">Møder booket under Møder registreres også automatisk. Registrér ikke det samme møde to gange.</small>

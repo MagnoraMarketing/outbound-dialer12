@@ -10,7 +10,7 @@ export async function GET() {
   try {
     const [profile, assets, levels, inventory, achievements, unlocked, transactions, config, approvals, listings] = await Promise.all([
       admin.from("game_profiles")
-        .select("company_name, level, xp, balance, lifetime_earned, verified_earnings_dkk, market_unlocked_at, public_profile, created_at")
+        .select("company_name, level, xp, balance, lifetime_earned, verified_earnings_dkk, market_ready_at, market_unlocked_at, public_profile, created_at")
         .eq("user_id", userId).single(),
       loadAssetCatalog(admin),
       admin.from("game_levels").select("level, title, min_company_value, required_asset, description").order("level"),
@@ -33,7 +33,7 @@ export async function GET() {
     const companyValue = (inventory.data ?? []).reduce((sum, item) => sum + Number(assetByKey.get(item.asset_key)?.value ?? 0), 0);
     const completed = new Map((unlocked.data ?? []).map((row) => [row.achievement_key, row.completed_at]));
     const listed = new Set((listings.data ?? []).map((row) => row.inventory_id));
-    const threshold = settings.market_unlock_dkk ?? 100000;
+    const threshold = settings.market_unlock_dkk ?? 50000;
     const earnings = Number(player.verified_earnings_dkk);
 
     return NextResponse.json({
@@ -46,10 +46,14 @@ export async function GET() {
       stats: {
         approved_meetings: (approvals.data ?? []).filter((row) => row.source_type === "meeting").length,
         approved_sales: (approvals.data ?? []).filter((row) => row.source_type === "sale").length,
+        approved_upsells: (approvals.data ?? []).filter((row) => row.source_type === "upsell").length,
         owned_assets: (inventory.data ?? []).length,
       },
       market: {
         threshold_dkk: threshold,
+        // Ready: the player has reached the threshold and can open the market.
+        ready: Boolean(player.market_ready_at),
+        ready_at: player.market_ready_at,
         unlocked: Boolean(player.market_unlocked_at),
         unlocked_at: player.market_unlocked_at,
         remaining_dkk: Math.max(0, threshold - earnings),
@@ -59,6 +63,7 @@ export async function GET() {
         meeting_approved: settings.reward_meeting_approved ?? 500,
         meeting_held: settings.reward_meeting_held ?? 500,
         sale_approved: settings.reward_sale_approved ?? 1000,
+        upsell_approved: settings.reward_upsell_approved ?? 2000,
       },
       levels: levels.data ?? [],
       assets,

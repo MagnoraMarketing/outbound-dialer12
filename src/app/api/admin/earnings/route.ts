@@ -8,7 +8,7 @@ import { DEFAULT_SYSTEM_FEE_DKK, splitEarnings } from "@/lib/system-fee";
 const NOT_ADMIN = "Kun administratorer kan godkende salgsindtjening.";
 
 type MeetingRow = { id: string; user_id: string; meeting_at: string; leads: { company_name: string; campaign_id: string | null } | null };
-type SaleRow = { id: string; user_id: string; campaign_id: string; created_at: string };
+type SaleRow = { id: string; user_id: string; campaign_id: string; event_type: "sale" | "upsell"; created_at: string };
 
 // Meetings and recorded sales awaiting (or with) an earnings decision. The
 // suggested DKK amount is the configured commission for the seller and campaign.
@@ -21,8 +21,8 @@ export async function GET() {
   const [meetings, sales, decisions, profiles, campaigns, targets, feedback, team] = await Promise.all([
     admin.from("meetings").select("id, user_id, meeting_at, leads(company_name, campaign_id)")
       .eq("team_id", teamId).gte("meeting_at", since).order("meeting_at", { ascending: false }).limit(1000),
-    admin.from("budget_events").select("id, user_id, campaign_id, created_at")
-      .eq("team_id", teamId).eq("event_type", "sale").gte("created_at", since).order("created_at", { ascending: false }).limit(1000),
+    admin.from("budget_events").select("id, user_id, campaign_id, event_type, created_at")
+      .eq("team_id", teamId).in("event_type", ["sale", "upsell"]).gte("created_at", since).order("created_at", { ascending: false }).limit(1000),
     admin.from("earning_approvals").select("user_id, source_type, source_id, status, amount_dkk, decided_at").eq("team_id", teamId),
     admin.from("profiles").select("id, full_name").eq("team_id", teamId),
     admin.from("campaigns").select("id, name").eq("team_id", teamId),
@@ -59,10 +59,10 @@ export async function GET() {
       decision: decision(`meeting:${meeting.id}`),
     })),
     ...((sales.data ?? []) as SaleRow[]).map((sale) => ({
-      source_type: "sale" as const, source_id: sale.id, user_id: sale.user_id, seller_name: names.get(sale.user_id) ?? "Uden navn",
+      source_type: sale.event_type, source_id: sale.id, user_id: sale.user_id, seller_name: names.get(sale.user_id) ?? "Uden navn",
       occurred_at: sale.created_at, company_name: null, campaign_name: campaignNames.get(sale.campaign_id) ?? "",
       partner_status: null, suggested_dkk: commission(sale.user_id, sale.campaign_id, "commission_per_sale"),
-      decision: decision(`sale:${sale.id}`),
+      decision: decision(`${sale.event_type}:${sale.id}`),
     })),
   ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
   // This month's approved earnings per seller, split into system coverage and the seller's own part.
@@ -104,17 +104,17 @@ export async function PUT(request: Request) {
   const { context, admin } = result;
   const teamId = context.profile.team_id;
   const body = await readJson(request);
-  const sourceType = body?.source_type;
+  const sourceType = typeof body?.source_type === "string" ? body.source_type : "";
   const status = body?.status;
   const amount = Number(body?.amount_dkk ?? 0);
-  if ((sourceType !== "meeting" && sourceType !== "sale") || !isUuid(body?.source_id)) return apiError("Vælg et møde eller salg.");
+  if (!["meeting", "sale", "upsell"].includes(sourceType) || !isUuid(body?.source_id)) return apiError("Vælg et møde, salg eller mersalg.");
   if (status !== "approved" && status !== "rejected") return apiError("Vælg godkend eller afvis.");
   if (!Number.isFinite(amount) || amount < 0 || amount > 10_000_000) return apiError("Beløbet skal være mellem 0 og 10.000.000 DKK.");
 
   // The seller is always taken from the source record, never from the request.
   const source = sourceType === "meeting"
     ? await admin.from("meetings").select("user_id").eq("id", body.source_id).eq("team_id", teamId).maybeSingle()
-    : await admin.from("budget_events").select("user_id").eq("id", body.source_id).eq("team_id", teamId).eq("event_type", "sale").maybeSingle();
+    : await admin.from("budget_events").select("user_id").eq("id", body.source_id).eq("team_id", teamId).eq("event_type", sourceType).maybeSingle();
   if (source.error) return apiError("Kilden kunne ikke findes.", 500);
   if (!source.data) return apiError(sourceType === "meeting" ? "Mødet findes ikke." : "Salget findes ikke.", 404);
 

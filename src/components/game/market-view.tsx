@@ -18,7 +18,8 @@ async function marketApi<T>(url: string, options?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function MarketView({ state, assetByKey, onChanged, onPublicChange }: {
+export function MarketView({ state, assetByKey, onChanged, onPublicChange, initialView = "listings" }: {
+  initialView?: "listings" | "mine";
   state: GameState; assetByKey: Map<string, GameAsset>; onChanged: () => Promise<void>; onPublicChange: (value: boolean) => void;
 }) {
   const [data, setData] = useState<MarketData | null>(null);
@@ -26,7 +27,7 @@ export function MarketView({ state, assetByKey, onChanged, onPublicChange }: {
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
-  const [view, setView] = useState<"listings" | "mine" | "history" | "players">("listings");
+  const [view, setView] = useState<"listings" | "mine" | "history" | "players">(initialView);
   const [confirm, setConfirm] = useState<Listing | null>(null);
   const [busy, setBusy] = useState(false);
   const [sellItem, setSellItem] = useState("");
@@ -113,7 +114,8 @@ export function MarketView({ state, assetByKey, onChanged, onPublicChange }: {
 
     {view === "mine" && <div className="mg-market-split">
       <div className="panel mg-sell">
-        <span className="panel-eyebrow">SÆT ET AKTIV TIL SALG</span>
+        <span className="panel-eyebrow">{mine.length || data?.history.length ? "SÆT ET AKTIV TIL SALG" : "START DIN FØRSTE BUTIK"}</span>
+        {!mine.length && !data?.history.length && <p className="mg-fineprint">Din butik på Magnora Market åbner, når du sætter dit første aktiv til salg. Kolleger, der også har låst markedet op, kan købe det.</p>}
         {sellable.length ? <form onSubmit={(event) => {
           event.preventDefault();
           const price = Number(sellPrice);
