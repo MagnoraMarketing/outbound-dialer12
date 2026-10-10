@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { apiError, readJson, requireContext } from "@/lib/http";
+import { apiError, createSupabaseAdminClient, readJson, requireContext } from "@/lib/http";
 
 export async function GET() {
   const result = await requireContext();
@@ -22,10 +22,18 @@ export async function POST(request: Request) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   if (name.length < 2 || name.length > 120) return apiError("Kampagnen skal have et navn på 2–120 tegn.");
   const { context } = result;
+  // A campaign can be created straight onto a partner (from Samarbejdspartnere).
+  const partnerId = typeof body?.partner_id === "string" && /^[0-9a-f-]{36}$/i.test(body.partner_id) ? body.partner_id : null;
+  if (partnerId) {
+    const { data: partner } = await createSupabaseAdminClient().from("partners").select("id")
+      .eq("id", partnerId).eq("team_id", context.profile.team_id).maybeSingle();
+    if (!partner) return apiError("Samarbejdspartneren findes ikke.", 404);
+  }
   const { data, error } = await context.supabase.from("campaigns").insert({
     team_id: context.profile.team_id,
     created_by: context.user.id,
     name,
+    ...(partnerId ? { partner_id: partnerId } : {}),
   }).select("id, name, created_at").single();
   if (error) {
     console.error("Campaign creation failed", error.code, error.message);

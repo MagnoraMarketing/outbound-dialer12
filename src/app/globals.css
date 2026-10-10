@@ -1247,3 +1247,8 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .sub-lines div { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; }
 .sub-lines dt { color: var(--muted); }
 .sub-lines dd { margin: 0; font-weight: 600; }
+.import-campaign-first { margin-bottom: 16px; }
+.pt-campaigns { display: grid; gap: 6px; }
+.pt-campaign-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pt-new-campaign { display: flex; gap: 8px; margin-top: 10px; }
+.pt-new-campaign input { flex: 1; min-width: 0; }

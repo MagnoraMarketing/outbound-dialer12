@@ -54,7 +54,22 @@ export async function POST(request: Request) {
     return apiError("Samarbejdspartneren kunne ikke oprettes.", 500);
   }
   await writeAudit(context, "partner_created", "partner", data.id, { name });
-  return NextResponse.json({ data }, { status: 201 });
+  // The partner's first campaign can be created in the same step.
+  const campaignName = text(body?.campaign_name, 120);
+  let campaignId: string | null = null;
+  if (campaignName.length >= 2) {
+    const { data: campaign, error: campaignError } = await admin.from("campaigns").insert({
+      team_id: context.profile.team_id, created_by: context.user.id, name: campaignName, partner_id: data.id,
+    }).select("id").single();
+    if (campaignError) {
+      console.error("Partner campaign creation failed", campaignError.message);
+      return NextResponse.json({ data, campaign_error: campaignError.code === "23505"
+        ? "Partneren er oprettet, men der findes allerede en kampagne med det navn."
+        : "Partneren er oprettet, men kampagnen kunne ikke oprettes." }, { status: 201 });
+    }
+    campaignId = campaign.id;
+  }
+  return NextResponse.json({ data: { ...data, campaign_id: campaignId } }, { status: 201 });
 }
 
 // Updates contact details and/or which campaigns belong to the partner.
