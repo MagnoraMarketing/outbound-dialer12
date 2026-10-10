@@ -4,9 +4,12 @@ import { apiError, createSupabaseAdminClient, readJson, requireContext } from "@
 export async function GET() {
   const result = await requireContext();
   if ("response" in result) return result.response;
-  const { data, error } = await result.context.supabase.from("campaigns")
-    .select("id, name, created_at").eq("team_id", result.context.profile.team_id)
+  const list = (columns: string) => result.context.supabase.from("campaigns")
+    .select(columns).eq("team_id", result.context.profile.team_id)
     .order("created_at", { ascending: false });
+  let { data, error } = await list("id, name, created_at, calendar_url, email_enabled");
+  // Until the calendar/e-mail migration has run, fall back to the base columns.
+  if (error?.code === "42703") ({ data, error } = await list("id, name, created_at"));
   if (error) {
     console.error("Campaign list query failed", error.message);
     return apiError("Kampagner kunne ikke hentes.", 500);

@@ -3,8 +3,8 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import {
-  AlertTriangle, ArrowRight, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, ExternalLink,
-  List, LogOut, Mail, Phone, UserRound, X,
+  AlertTriangle, ArrowRight, Bell, CalendarDays, CalendarPlus, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink,
+  List, LogOut, Mail, Phone, Share, UserRound, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -14,11 +14,12 @@ import {
 type CustomerMeeting = {
   id: string; meeting_at: string; meeting_type: string; notes: string; calendar_url: string | null;
   seller_name: string; campaign_name: string; company_name: string; contact_person: string | null;
-  phone: string | null; email: string | null;
+  phone: string | null; email: string | null; campaign_id: string | null;
   feedback: { status: FeedbackStatus; note: string; updated_at: string } | null;
   overdue: boolean;
 };
 type CustomerInfo = { full_name: string; company_name: string; email: string };
+type CustomerCampaign = { id: string; name: string; feed_url: string | null };
 type AuthMode = "login" | "forgot" | "recovery";
 type Filter = "all" | "overdue" | "awaiting" | "upcoming" | "rated";
 
@@ -52,7 +53,9 @@ export function CustomerPortal() {
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [customer, setCustomer] = useState<CustomerInfo | null>(null);
-  const [meetings, setMeetings] = useState<CustomerMeeting[]>([]);
+  const [allMeetings, setMeetings] = useState<CustomerMeeting[]>([]);
+  const [campaigns, setCampaigns] = useState<CustomerCampaign[]>([]);
+  const [campaignId, setCampaignId] = useState("all");
   const [loading, setLoading] = useState(false);
   const [noAccess, setNoAccess] = useState("");
   const [error, setError] = useState("");
@@ -84,6 +87,7 @@ export function CustomerPortal() {
       if (!response.ok) throw new Error(body?.error ?? "Møderne kunne ikke hentes.");
       setNoAccess("");
       setCustomer(body.customer);
+      setCampaigns(body.campaigns ?? []);
       setMeetings(body.data);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Møderne kunne ikke hentes.");
@@ -141,6 +145,7 @@ export function CustomerPortal() {
     await supabase?.auth.signOut();
     setUser(null);
     setMeetings([]);
+    setCampaigns([]);
     setCustomer(null);
     setNoAccess("");
   }
@@ -155,6 +160,10 @@ export function CustomerPortal() {
       ? { ...meeting, feedback: body.data, overdue: false } : meeting));
   }
 
+  const meetings = useMemo(() => campaignId === "all" ? allMeetings
+    : allMeetings.filter((meeting) => meeting.campaign_id === campaignId), [allMeetings, campaignId]);
+  const feedCampaigns = campaignId === "all" ? campaigns.filter((campaign) => campaign.feed_url)
+    : campaigns.filter((campaign) => campaign.id === campaignId && campaign.feed_url);
   const now = Date.now();
   const overdue = meetings.filter((meeting) => meeting.overdue);
   const counts = useMemo(() => ({
@@ -175,7 +184,7 @@ export function CustomerPortal() {
     .filter((meeting) => filter === "all"
       || (filter === "rated" ? Boolean(meeting.feedback) : meetingState(meeting, now) === filter))
     .sort((a, b) => filter === "upcoming" ? a.meeting_at.localeCompare(b.meeting_at) : b.meeting_at.localeCompare(a.meeting_at));
-  const openMeeting = meetings.find((meeting) => meeting.id === openMeetingId) ?? null;
+  const openMeeting = allMeetings.find((meeting) => meeting.id === openMeetingId) ?? null;
 
   if (authLoading) return <div className="auth-screen"><div className="loading-orbit" /><p>Henter kundeportalen …</p></div>;
 
@@ -198,6 +207,7 @@ export function CustomerPortal() {
         {authMode === "forgot" && <button type="button" className="text-button auth-resend" onClick={() => setAuthMode("login")}>Tilbage til login</button>}
       </form>}
       <div className="auth-privacy"><CheckCircle2 size={15} /> Du ser kun møder fra dine egne kampagner</div>
+      <div className="cp-auth-install"><InstallAppButton /></div>
     </div><div className="auth-caption">Kundeportal for Nordcall.</div></div>;
   }
 
@@ -215,6 +225,7 @@ export function CustomerPortal() {
         <span className="cp-bell" aria-label={overdue.length ? `${overdue.length} møder mangler status` : "Ingen påmindelser"}>
           <Bell size={17} />{overdue.length > 0 && <i>{overdue.length}</i>}
         </span>
+        <InstallAppButton />
         <span className="cp-customer"><strong>{customer?.company_name || "Kunde"}</strong><small>{customer?.email}</small></span>
         <button className="icon-button" onClick={() => void logout()} aria-label="Log ud"><LogOut size={16} /></button>
       </div>
@@ -233,6 +244,14 @@ export function CustomerPortal() {
         <div><strong>{overdue.length === 1 ? "1 møde mangler din status" : `${overdue.length} møder mangler din status`}</strong>
           <p>Det er mere end 12 timer siden mødet. Giv en kort status, så sælgeren ved, hvordan det gik.</p></div>
         <button className="button button-primary" onClick={() => setOpenMeetingId(overdue[0].id)}>Giv status nu <ArrowRight size={15} /></button>
+      </section>}
+
+      {(campaigns.length > 1 || feedCampaigns.length > 0) && <section className="cp-campaigns">
+        {campaigns.length > 1 && <div className="cp-filters" role="tablist" aria-label="Kampagner">
+          <button className={campaignId === "all" ? "cp-filter-active" : ""} onClick={() => setCampaignId("all")}>Alle kampagner</button>
+          {campaigns.map((campaign) => <button key={campaign.id} className={campaignId === campaign.id ? "cp-filter-active" : ""} onClick={() => setCampaignId(campaign.id)}>{campaign.name}</button>)}
+        </div>}
+        <CalendarSubscribe campaigns={feedCampaigns} />
       </section>}
 
       <section className="cp-stats">
@@ -354,4 +373,61 @@ function MeetingDialog({ meeting, now, onClose, onSave }: {
       </form> : <p className="cp-future-note">Du kan give status, når mødet er afholdt.</p>}
     </section>
   </div>;
+}
+
+function CalendarSubscribe({ campaigns }: { campaigns: CustomerCampaign[] }) {
+  const [open, setOpen] = useState(false);
+  if (!campaigns.length) return null;
+  return <div className="cp-subscribe">
+    <button className="button button-secondary button-small" onClick={() => setOpen(!open)} aria-expanded={open}><CalendarPlus size={14} /> Tilføj til din kalender</button>
+    {open && <div className="cp-subscribe-menu">
+      <p>Abonnér på kampagnens kalender, så nye møder automatisk dukker op i din egen kalender.</p>
+      {campaigns.map((campaign) => {
+        const webcal = campaign.feed_url!.replace(/^https?:/, "webcal:");
+        return <div key={campaign.id} className="cp-subscribe-row">
+          {campaigns.length > 1 && <strong>{campaign.name}</strong>}
+          <a className="text-button" href={`https://calendar.google.com/calendar/r?cid=${encodeURIComponent(webcal)}`} target="_blank" rel="noreferrer">Google Kalender <ExternalLink size={12} /></a>
+          <a className="text-button" href={webcal}>Outlook / Apple Kalender <ExternalLink size={12} /></a>
+        </div>;
+      })}
+    </div>}
+  </div>;
+}
+
+type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+
+// Lets the customer keep the portal as an app on the phone or desktop.
+function InstallAppButton() {
+  const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(false);
+  const [iosHelp, setIosHelp] = useState(false);
+  const [isIos, setIsIos] = useState(false);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/kunde-sw.js", { scope: "/kunde" }).catch(() => undefined);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches
+      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    setInstalled(standalone);
+    setIsIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
+    const onPrompt = (event: Event) => { event.preventDefault(); setPromptEvent(event as InstallPromptEvent); };
+    const onInstalled = () => { setInstalled(true); setPromptEvent(null); };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  if (installed || (!promptEvent && !isIos)) return null;
+  return <span className="cp-install">
+    <button className="button button-secondary button-small" onClick={async () => {
+      if (promptEvent) {
+        await promptEvent.prompt();
+        await promptEvent.userChoice.catch(() => null);
+        setPromptEvent(null);
+      } else setIosHelp(!iosHelp);
+    }}><Download size={14} /> Hent app</button>
+    {iosHelp && <span className="cp-install-help" role="note">Tryk på <Share size={13} /> Del i Safari og vælg <strong>Føj til hjemmeskærm</strong>.</span>}
+  </span>;
 }

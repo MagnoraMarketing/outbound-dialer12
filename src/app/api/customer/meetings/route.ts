@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { apiError } from "@/lib/http";
 import { requirePartnerUser } from "@/lib/partner";
 import { feedbackByMeeting, isFeedbackOverdue } from "@/lib/meeting-feedback";
+import { siteUrl } from "@/lib/site-url";
 
 type MeetingRow = {
   id: string; meeting_at: string; meeting_type: string; notes: string; calendar_url: string | null; user_id: string;
@@ -13,7 +14,16 @@ export async function GET() {
   if ("response" in result) return result.response;
   const { admin, account, partnerName, campaigns } = result.context;
   const customer = { full_name: account.full_name, company_name: partnerName, email: account.email };
-  if (!campaigns.length) return NextResponse.json({ customer, data: [] });
+  if (!campaigns.length) return NextResponse.json({ customer, campaigns: [], data: [] });
+  // Each campaign has its own calendar feed the customer can subscribe to.
+  const feeds = await admin.from("campaigns").select("id, calendar_token")
+    .in("id", campaigns.map((campaign) => campaign.id));
+  const tokenByCampaign = new Map((feeds.error ? [] : feeds.data ?? [])
+    .map((row) => [row.id as string, row.calendar_token as string]));
+  const campaignList = campaigns.map((campaign) => ({
+    id: campaign.id, name: campaign.name,
+    feed_url: tokenByCampaign.has(campaign.id) ? `${siteUrl()}/api/calendar/${tokenByCampaign.get(campaign.id)}.ics` : null,
+  }));
 
   const meetings = await admin.from("meetings")
     .select("id, meeting_at, meeting_type, notes, calendar_url, user_id, leads!inner(company_name, contact_person, phone, email, campaign_id)")
@@ -42,6 +52,7 @@ export async function GET() {
   const now = Date.now();
   return NextResponse.json({
     customer,
+    campaigns: campaignList,
     data: rows.map((row) => {
       const rowFeedback = feedback.get(row.id) ?? null;
       return {
@@ -51,6 +62,7 @@ export async function GET() {
         notes: row.notes,
         calendar_url: row.calendar_url,
         seller_name: sellerNames.get(row.user_id) ?? "Sælger",
+        campaign_id: row.leads?.campaign_id ?? null,
         campaign_name: campaignNames.get(row.leads?.campaign_id ?? "") ?? "",
         company_name: row.leads?.company_name ?? "Virksomhed",
         contact_person: row.leads?.contact_person ?? null,

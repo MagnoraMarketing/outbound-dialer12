@@ -41,9 +41,12 @@ export async function GET(request: Request) {
   }
   const candidates = (data ?? []).filter((lead) => normalizePhone(lead.phone));
   if (!candidates.length) return NextResponse.json({ data: [] });
+  // Look up the team's few live calls instead of passing every lead id: 500 ids
+  // make the request URL too long and the whole queue came back empty.
   const { data: activeCalls, error: activeError } = await context.supabase.from("calls")
-    .select("lead_id").in("lead_id", candidates.map((lead) => lead.id))
-    .in("status", ["queued", "initiated", "ringing", "answered"]);
+    .select("lead_id").eq("team_id", context.profile.team_id).not("lead_id", "is", null)
+    .in("status", ["queued", "initiated", "ringing", "answered"])
+    .gte("started_at", new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString());
   if (activeError) {
     console.error("Active call lookup failed", activeError.message);
     return apiError("Kunne ikke kontrollere aktive opkald.", 500);
