@@ -86,20 +86,40 @@ begin
   assert nordcall.game_market_list(a, (select id from nordcall.game_inventory where owner_id = a limit 1), 100) = 'market_locked',
     'T12 locked players cannot list';
 
-  -- 13. Reaching 100.000 DKK unlocks the market.
+  -- 13. Reaching 50.000 DKK makes the player ready; the player then unlocks the market.
+  assert nordcall.game_market_unlock(a) = 'market_locked', 'T13 cannot unlock before 50.000 DKK';
   insert into nordcall.earning_approvals (team_id, user_id, source_type, source_id, status, amount_dkk)
-  values (team, a, 'sale', 'f0000000-0000-0000-0000-000000000001', 'approved', 98500);
+  values (team, a, 'sale', 'f0000000-0000-0000-0000-000000000001', 'approved', 48500);
   perform nordcall.game_sync(a);
   select * into player from nordcall.game_profiles where user_id = a;
-  assert player.verified_earnings_dkk = 100000 and player.market_unlocked_at is not null, 'T13 100.000 DKK unlocks the market';
+  assert player.verified_earnings_dkk = 50000 and player.market_ready_at is not null, 'T13 50.000 DKK makes the player ready';
+  assert player.market_unlocked_at is null, 'T13 the market is not opened automatically';
+  assert nordcall.game_market_unlock(a) = 'ok', 'T13 a ready player can unlock';
+  assert nordcall.game_market_unlock(a) = 'already_unlocked', 'T13 unlock is idempotent';
+  select * into player from nordcall.game_profiles where user_id = a;
+  assert player.market_unlocked_at is not null, 'T13 unlock stores the time';
+  assert exists (select 1 from nordcall.game_user_achievements where user_id = a and achievement_key = 'market_unlocked'),
+    'T13 unlocking completes the Market Unlocked achievement';
   assert (select count(*) from nordcall.game_transactions where user_id = a and ref = 'sale_approved:f0000000-0000-0000-0000-000000000001') = 1,
     'T8 approved sale rewarded';
+
+  -- 18. An approved upsell gives the bigger reward and completes First Upsell.
+  insert into nordcall.earning_approvals (team_id, user_id, source_type, source_id, status, amount_dkk)
+  values (team, b, 'upsell', 'f0000000-0000-0000-0000-000000000009', 'approved', 0);
+  perform nordcall.game_sync(b);
+  assert exists (select 1 from nordcall.game_transactions where user_id = b and ref = 'upsell_approved:f0000000-0000-0000-0000-000000000009'
+    and amount = 2000), 'T18 approved upsell rewards 2.000 vkr';
+  assert exists (select 1 from nordcall.game_user_achievements where user_id = b and achievement_key = 'first_upsell'),
+    'T18 first upsell completes the mission';
+  perform nordcall.game_sync(b);
+  assert (select count(*) from nordcall.game_transactions where user_id = b and ref like 'upsell_approved:%') = 1, 'T18 rewarded once';
 
   -- 14. A later correction does not remove access.
   update nordcall.earning_approvals set status = 'rejected' where source_id = 'f0000000-0000-0000-0000-000000000001';
   perform nordcall.game_sync(a);
   select * into player from nordcall.game_profiles where user_id = a;
-  assert player.verified_earnings_dkk = 1500 and player.market_unlocked_at is not null, 'T14 access stays after a correction';
+  assert player.verified_earnings_dkk = 1500 and player.market_unlocked_at is not null and player.market_ready_at is not null,
+    'T14 access stays after a correction';
 
   -- 17. Nobody can list or sell an asset they do not own.
   perform nordcall.game_sync(b);

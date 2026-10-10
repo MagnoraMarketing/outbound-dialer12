@@ -6,7 +6,7 @@ import { feedbackLabels, type FeedbackStatus } from "@/lib/feedback-labels";
 
 type Decision = { status: "approved" | "rejected"; amount_dkk: number; decided_at: string } | null;
 type EarningItem = {
-  source_type: "meeting" | "sale"; source_id: string; user_id: string; seller_name: string; occurred_at: string;
+  source_type: "meeting" | "sale" | "upsell"; source_id: string; user_id: string; seller_name: string; occurred_at: string;
   company_name: string | null; campaign_name: string; partner_status: FeedbackStatus | null; suggested_dkk: number; decision: Decision;
 };
 
@@ -28,7 +28,7 @@ export function EarningsApprovals() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [filter, setFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
-  const [type, setType] = useState<"all" | "meeting" | "sale">("all");
+  const [type, setType] = useState<"all" | "meeting" | "sale" | "upsell">("all");
   const [query, setQuery] = useState("");
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [busyKey, setBusyKey] = useState("");
@@ -113,7 +113,7 @@ export function EarningsApprovals() {
         <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="Status">
           <option value="pending">Afventer</option><option value="approved">Godkendt</option><option value="rejected">Afvist</option><option value="all">Alle</option></select>
         <select value={type} onChange={(event) => setType(event.target.value as typeof type)} aria-label="Type">
-          <option value="all">Møder og salg</option><option value="meeting">Møder</option><option value="sale">Salg</option></select>
+          <option value="all">Møder og salg</option><option value="meeting">Møder</option><option value="sale">Salg</option><option value="upsell">Mersalg</option></select>
       </div>
       <p className="mg-fineprint">Beløbet er foreslået ud fra provisionssatsen i sælgerens budget for kampagnen. Ret det, hvis den aftalte indtjening er en anden.</p>
       <div className="table-scroll"><table className="ea-table"><thead><tr><th>Dato</th><th>Type</th><th>Sælger</th><th>Virksomhed / kampagne</th><th>Partnerens status</th><th>DKK</th><th>Beslutning</th></tr></thead>
@@ -121,7 +121,7 @@ export function EarningsApprovals() {
           const key = `${item.source_type}:${item.source_id}`;
           return <tr key={key}>
             <td>{new Date(item.occurred_at).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })}</td>
-            <td>{item.source_type === "meeting" ? "Møde" : "Salg"}</td>
+            <td>{item.source_type === "meeting" ? "Møde" : item.source_type === "upsell" ? "Mersalg" : "Salg"}</td>
             <td>{item.seller_name}</td>
             <td><strong>{item.company_name ?? "Registreret salg"}</strong><small className="table-sub">{item.campaign_name || "—"}</small></td>
             <td>{item.partner_status ? <span className={`fb-badge fb-${item.partner_status}`}>{feedbackLabels[item.partner_status]}</span> : <span className="fb-muted">—</span>}</td>
