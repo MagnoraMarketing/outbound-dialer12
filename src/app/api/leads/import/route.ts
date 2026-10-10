@@ -79,27 +79,38 @@ export async function POST(request: Request) {
   }
 
   let inserted = 0;
+  let moved = 0;
   for (let offset = 0; offset < rows.length; offset += 250) {
     const chunk = rows.slice(offset, offset + 250);
     const [phoneResult, companyResult] = await Promise.all([
-      context.supabase.from("leads").select("phone").is("deleted_at", null)
+      context.supabase.from("leads").select("id, phone, company_name, lead_list_id, status").is("deleted_at", null)
         .in("phone", chunk.map((row) => row.phone as string)),
-      context.supabase.from("leads").select("company_name").is("deleted_at", null)
+      context.supabase.from("leads").select("id, phone, company_name, lead_list_id, status").is("deleted_at", null)
         .in("company_name", chunk.map((row) => row.company_name as string)),
     ]);
     if (phoneResult.error || companyResult.error) {
       console.error("Import duplicate lookup failed", phoneResult.error?.message ?? companyResult.error?.message);
       return apiError("Dublettkontrollen fejlede. Ingen flere rækker blev importeret.", 500);
     }
-    const existingPhones = new Set((phoneResult.data ?? []).map((item) => item.phone));
-    const existingCompanies = new Set((companyResult.data ?? []).map((item) => item.company_name.toLocaleLowerCase("da-DK")));
+    type ExistingLead = { id: string; phone: string; company_name: string; lead_list_id: string | null; status: string };
+    const byPhone = new Map((phoneResult.data ?? []).map((item) => [item.phone as string, item as ExistingLead]));
+    const byCompany = new Map((companyResult.data ?? [])
+      .map((item) => [(item.company_name as string).toLocaleLowerCase("da-DK"), item as ExistingLead]));
+    // Companies the team already has are moved into the chosen campaign and list
+    // instead of being skipped, so a list can be re-imported into a new campaign.
+    const moveIds: string[] = [];
     const fresh: Record<string, unknown>[] = chunk.filter((row, localIndex) => {
-      const duplicate = existingPhones.has(row.phone) || existingCompanies.has((row.company_name as string).toLocaleLowerCase("da-DK"));
-      if (duplicate) errors.push({
-        row: sourceRowByPhone.get(row.phone as string) ?? rowOffset + offset + localIndex + 2,
-        reason: "Virksomhed eller telefonnummer findes allerede",
-      });
-      return !duplicate;
+      const existing = byPhone.get(row.phone as string) ?? byCompany.get((row.company_name as string).toLocaleLowerCase("da-DK"));
+      if (!existing) return true;
+      const sourceRow = sourceRowByPhone.get(row.phone as string) ?? rowOffset + offset + localIndex + 2;
+      if (existing.lead_list_id === leadList.id) {
+        errors.push({ row: sourceRow, reason: "Virksomheden findes allerede i denne leadliste" });
+      } else if (existing.status === "do_not_call") {
+        errors.push({ row: sourceRow, reason: "Virksomheden er markeret som 'Ring ikke'" });
+      } else if (!moveIds.includes(existing.id)) {
+        moveIds.push(existing.id);
+      }
+      return false;
     }).map((row) => ({
       ...row,
       team_id: context.profile.team_id,
@@ -109,6 +120,16 @@ export async function POST(request: Request) {
       created_by: context.user.id,
       status: "new",
     }));
+    if (moveIds.length) {
+      const { error: moveError } = await context.supabase.from("leads")
+        .update({ campaign_id: leadList.campaign_id, lead_list_id: leadList.id })
+        .in("id", moveIds).eq("team_id", context.profile.team_id);
+      if (moveError) {
+        console.error("Lead import move failed", moveError.code, moveError.message);
+        return apiError("Eksisterende virksomheder kunne ikke flyttes til kampagnen.", 500);
+      }
+      moved += moveIds.length;
+    }
     if (!fresh.length) continue;
     async function insertWithIsolation(batch: typeof fresh): Promise<boolean> {
       if (!batch.length) return true;
@@ -140,11 +161,12 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: "Importen blev stoppet af en databasefejl. Allerede importerede rækker er gemt; se antal og rækkefejl nedenfor.",
         imported: inserted,
+        moved,
         rejected: errors.length,
         errors,
       }, { status: 500 });
     }
   }
-  await writeAudit(context, "imported", "lead", null, { imported: inserted, rejected: errors.length });
-  return NextResponse.json({ imported: inserted, rejected: errors.length, errors });
+  await writeAudit(context, "imported", "lead", null, { imported: inserted, moved, rejected: errors.length });
+  return NextResponse.json({ imported: inserted, moved, rejected: errors.length, errors });
 }

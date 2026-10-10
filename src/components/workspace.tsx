@@ -252,7 +252,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [csvProgress, setCsvProgress] = useState(0);
   const [csvErrors, setCsvErrors] = useState<{ row: number; reason: string }[]>([]);
   const [csvBusy, setCsvBusy] = useState(false);
-  const [csvDone, setCsvDone] = useState<{ imported: number; skipped: number } | null>(null);
+  const [csvDone, setCsvDone] = useState<{ imported: number; moved: number; skipped: number } | null>(null);
   const [callbackPick, setCallbackPick] = useState<LeadPick>(emptyLeadPick);
   const [meetingPick, setMeetingPick] = useState<LeadPick>(emptyLeadPick);
   const [meetingDate, setMeetingDate] = useState("");
@@ -1320,6 +1320,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     setCsvProgress(0);
     setCsvErrors([]);
     let imported = 0;
+    let moved = 0;
     const allErrors: { row: number; reason: string }[] = [];
     const chunkSize = 250;
     try {
@@ -1336,6 +1337,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         });
         const result = await response.json().catch(() => null) as {
           imported?: number;
+          moved?: number;
           errors?: { row: number; reason: string }[];
           error?: string;
         } | null;
@@ -1352,12 +1354,13 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           throw new Error("Importserveren returnerede et ugyldigt svar.");
         }
         imported += result.imported;
+        moved += result.moved ?? 0;
         allErrors.push(...result.errors);
         setCsvProgress(Math.min(100, Math.round(((offset + chunkSize) / csvRows.length) * 100)));
       }
       setCsvErrors(allErrors);
-      setCsvDone({ imported, skipped: allErrors.length });
-      setNotice(`${imported} virksomheder importeret. ${allErrors.length} rækker blev sprunget over.`);
+      setCsvDone({ imported, moved, skipped: allErrors.length });
+      setNotice(`${imported} virksomheder importeret${moved ? `, ${moved} eksisterende flyttet til kampagnen` : ""}. ${allErrors.length} rækker blev sprunget over.`);
       void loadPageData("leads");
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Importen fejlede.");
@@ -2423,7 +2426,7 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
   onCreateCampaign: () => void; onCreateLeadList: () => void;
   progress: number; busy: boolean; fileRef: React.RefObject<HTMLInputElement | null>; onFile: (file?: File) => void;
   onMapping: (key: CsvField, value: string) => void; onImport: () => void; onDrop: (file: File) => void;
-  done: { imported: number; skipped: number } | null; onGoToDialer: () => void;
+  done: { imported: number; moved: number; skipped: number } | null; onGoToDialer: () => void;
 }) {
   const [dragging, setDragging] = useState(false);
   return <div className="view">
@@ -2454,13 +2457,13 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
         <div className="preview-table"><div className="preview-heading"><strong>Forhåndsvisning</strong><span>De første 5 rækker</span></div><div className="table-scroll"><table><thead><tr>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <th key={field.key}>{field.label}</th>)}</tr></thead><tbody>{rows.slice(0, 5).map((row, index) => <tr key={index}>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <td key={field.key}>{row[mapping[field.key]!] || "—"}</td>)}</tr>)}</tbody></table></div></div>
         {!!errors.length && <div className="import-errors"><strong>{errors.length} rækker blev sprunget over</strong>{errors.slice(0, 10).map((item, index) => <span key={index}>Række {item.row}: {item.reason}</span>)}</div>}
         {busy && <div className="progress-block"><div><span>Importerer sikkert …</span><strong>{progress}%</strong></div><i><b style={{ width: `${progress}%` }} /></i></div>}
-        {done ? <div className="import-footer import-done"><span><CheckCircle2 size={15} /> <strong>Importen er færdig:</strong> {done.imported.toLocaleString("da-DK")} virksomheder importeret{done.skipped ? `, ${done.skipped.toLocaleString("da-DK")} sprunget over` : ""}.</span>
+        {done ? <div className="import-footer import-done"><span><CheckCircle2 size={15} /> <strong>Importen er færdig:</strong> {done.imported.toLocaleString("da-DK")} virksomheder importeret{done.moved ? `, ${done.moved.toLocaleString("da-DK")} eksisterende flyttet til kampagnen` : ""}{done.skipped ? `, ${done.skipped.toLocaleString("da-DK")} sprunget over` : ""}.</span>
           <span className="import-done-actions"><button className="button button-secondary" onClick={() => fileRef.current?.click()}>Importér en ny fil</button>
             <button className="button button-primary" onClick={onGoToDialer}>Gå til Opkald <ArrowRight size={15} /></button></span></div>
         : <div className="import-footer"><span><CheckCircle2 size={15} /> Dubletter og ugyldige numre kontrolleres automatisk.</span><button className="button button-primary" disabled={busy || !rows.length || !selectedCampaignId} onClick={onImport}>{busy ? "Importerer …" : !selectedCampaignId ? "Vælg en kampagne først" : `Importér ${rows.length.toLocaleString("da-DK")} rækker`} <ArrowRight size={15} /></button></div>}
       </div>}
     </div>
-    <div className="import-hint"><span><Sparkles size={15} /></span><p><strong>Godt at vide</strong> Dine data bliver kun synlige for dig og dit team. Leads med samme telefonnummer eller firmanavn bliver sprunget over.</p></div>
+    <div className="import-hint"><span><Sparkles size={15} /></span><p><strong>Godt at vide</strong> Dine data bliver kun synlige for dig og dit team. Virksomheder, I allerede har, flyttes til den valgte kampagne og leadliste. Dubletter i selve filen springes over.</p></div>
   </div>;
 }
 
