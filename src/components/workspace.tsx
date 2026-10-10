@@ -22,6 +22,7 @@ import { EarningsApprovals } from "@/components/earnings-approvals";
 import { PhoneNumbersView } from "@/components/phone-numbers-view";
 import { CampaignsView } from "@/components/campaigns-view";
 import { FollowUpEmailDialog } from "@/components/follow-up-email";
+import { ReadinessPanel } from "@/components/readiness-panel";
 import { emptyLeadPick, ensureLead, LeadPicker, type LeadPick } from "@/components/lead-picker";
 import { meetingState, meetingStateLabels, type MeetingState } from "@/lib/feedback-labels";
 
@@ -1360,7 +1361,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       }
       setCsvErrors(allErrors);
       setCsvDone({ imported, moved, skipped: allErrors.length });
-      setNotice(`${imported} virksomheder importeret${moved ? `, ${moved} eksisterende flyttet til kampagnen` : ""}. ${allErrors.length} rækker blev sprunget over.`);
+      setNotice(`${imported + moved} virksomheder er nu i kampagnen. ${allErrors.length} rækker blev sprunget over.`);
       void loadPageData("leads");
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Importen fejlede.");
@@ -1898,6 +1899,7 @@ function AdminHome({ name, setPage }: { name: string; setPage: (page: Page) => v
   return <section className="admin-home">
     <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Hej {name}</h1>
       <p>Her styrer du teamet, kampagnerne og alt det praktiske. Sælgerne ser kun det, du giver dem adgang til.</p></div></div>
+    <ReadinessPanel onOpen={setPage} />
     <div className="admin-home-grid">{links.map(({ page, title, text, icon: Icon }) =>
       <button key={page} className="panel admin-home-card" onClick={() => setPage(page)}>
         <span className="admin-home-icon"><Icon size={18} /></span>
@@ -2457,7 +2459,7 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
         <div className="preview-table"><div className="preview-heading"><strong>Forhåndsvisning</strong><span>De første 5 rækker</span></div><div className="table-scroll"><table><thead><tr>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <th key={field.key}>{field.label}</th>)}</tr></thead><tbody>{rows.slice(0, 5).map((row, index) => <tr key={index}>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <td key={field.key}>{row[mapping[field.key]!] || "—"}</td>)}</tr>)}</tbody></table></div></div>
         {!!errors.length && <div className="import-errors"><strong>{errors.length} rækker blev sprunget over</strong>{errors.slice(0, 10).map((item, index) => <span key={index}>Række {item.row}: {item.reason}</span>)}</div>}
         {busy && <div className="progress-block"><div><span>Importerer sikkert …</span><strong>{progress}%</strong></div><i><b style={{ width: `${progress}%` }} /></i></div>}
-        {done ? <div className="import-footer import-done"><span><CheckCircle2 size={15} /> <strong>Importen er færdig:</strong> {done.imported.toLocaleString("da-DK")} virksomheder importeret{done.moved ? `, ${done.moved.toLocaleString("da-DK")} eksisterende flyttet til kampagnen` : ""}{done.skipped ? `, ${done.skipped.toLocaleString("da-DK")} sprunget over` : ""}.</span>
+        {done ? <div className="import-footer import-done"><span><CheckCircle2 size={15} /> <strong>Importen er færdig:</strong> {(done.imported + done.moved).toLocaleString("da-DK")} virksomheder er nu i kampagnen{done.skipped ? `, ${done.skipped.toLocaleString("da-DK")} sprunget over` : ""}.</span>
           <span className="import-done-actions"><button className="button button-secondary" onClick={() => fileRef.current?.click()}>Importér en ny fil</button>
             <button className="button button-primary" onClick={onGoToDialer}>Gå til Opkald <ArrowRight size={15} /></button></span></div>
         : <div className="import-footer"><span><CheckCircle2 size={15} /> Dubletter og ugyldige numre kontrolleres automatisk.</span><button className="button button-primary" disabled={busy || !rows.length || !selectedCampaignId} onClick={onImport}>{busy ? "Importerer …" : !selectedCampaignId ? "Vælg en kampagne først" : `Importér ${rows.length.toLocaleString("da-DK")} rækker`} <ArrowRight size={15} /></button></div>}
