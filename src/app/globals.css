@@ -532,6 +532,9 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .import-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 16px; margin-top: 17px; border-top: 1px solid #edf0f5; }
 .import-footer > span { display: inline-flex; align-items: center; gap: 6px; color: #8da094; font-size: 8px; }
 .import-footer > span svg { color: #5bae91; }
+.import-done { flex-wrap: wrap; }
+.import-done > span:first-child { color: #2f6b52; font-size: 11px; }
+.import-done-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .import-hint { padding: 11px 13px; }
 .import-hint p { line-height: 1.6; }
 .campaign-import { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px 16px; padding: 15px; margin-top: 16px; background: #fbfcff; }
