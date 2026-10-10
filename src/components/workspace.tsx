@@ -89,6 +89,7 @@ type TeamMember = {
   campaign_ids?: string[]; lead_list_ids?: string[];
 };
 type LeadFilters = { city: string; industry: string; employees_min: string; employees_max: string; assigned_user_id: string; last_contacted_after: string; callback_after: string };
+type QueueStats = { total: number; closed: number; waiting: number; invalid_phone: number; active_calls: number };
 type Campaign = { id: string; name: string; created_at: string; calendar_url?: string | null; email_enabled?: boolean };
 type LeadList = { id: string; campaign_id: string; name: string; created_at: string };
 type TeamAdminData = { data: TeamMember[]; campaigns: Campaign[]; lead_lists: LeadList[] };
@@ -213,6 +214,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const [leadsTotal, setLeadsTotal] = useState(0);
   const [leadsPage, setLeadsPage] = useState(0);
   const [queue, setQueue] = useState<Lead[]>([]);
+  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [calls, setCalls] = useState<Call[]>([]);
   const [callbacks, setCallbacks] = useState<Callback[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -319,8 +321,9 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         const params = new URLSearchParams();
         if (selectedCampaignId) params.set("campaign_id", selectedCampaignId);
         if (selectedLeadListId) params.set("lead_list_id", selectedLeadListId);
-        const result = await api<{ data: Lead[] }>(`/api/leads/queue?${params.toString()}`);
+        const result = await api<{ data: Lead[]; stats?: QueueStats }>(`/api/leads/queue?${params.toString()}`);
         setQueue(result.data);
+        setQueueStats(result.stats ?? null);
         setActiveLead((current) => current && result.data.some((lead) => lead.id === current.id)
           ? current : result.data[0] ?? null);
       } else if (activePage === "callbacks") {
@@ -1654,7 +1657,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           />}
           {page === "leads" && profile.role !== "salesperson" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
-            lead={activeLead} queueCount={queue.length} loading={loading} leadListsLoading={leadListsLoading}
+            lead={activeLead} queueCount={queue.length} queueStats={queueStats} loading={loading} leadListsLoading={leadListsLoading}
             call={activeCall} elapsed={elapsed} callStarted={callStarted} voiceState={voiceState}
             campaigns={campaigns} leadLists={leadLists} selectedCampaignId={selectedCampaignId} selectedLeadListId={selectedLeadListId}
             onCampaign={(id) => { setSelectedCampaignId(id); setSelectedLeadListId(""); setQueue([]); setActiveLead(null); }}
@@ -2175,10 +2178,10 @@ function LeadsView({ leads, total, page, onPage, loading, status, setStatus, fil
   </div>;
 }
 
-function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed, callStarted, voiceState, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
+function DialerView({ lead, queueCount, queueStats, loading, leadListsLoading, call, elapsed, callStarted, voiceState, campaigns, leadLists, selectedCampaignId, selectedLeadListId,
   onCampaign, onLeadList, manualPhone, setManualPhone, onManualCall, callStartBusy, onCreateLead,
   note, setNote, callbackAt, setCallbackAt, busy, onCall, onOutcome, onNext, onRefresh, onBookMeeting, onHistoryError, onNotice }: {
-  lead: Lead | null; queueCount: number; loading: boolean; leadListsLoading: boolean; call: Call | null; elapsed: number; callStarted: number | null; voiceState: "disconnected" | "connecting" | "ready"; note: string; setNote: (value: string) => void;
+  lead: Lead | null; queueCount: number; queueStats: QueueStats | null; loading: boolean; leadListsLoading: boolean; call: Call | null; elapsed: number; callStarted: number | null; voiceState: "disconnected" | "connecting" | "ready"; note: string; setNote: (value: string) => void;
   campaigns: Campaign[]; leadLists: LeadList[]; selectedCampaignId: string; selectedLeadListId: string;
   onCampaign: (id: string) => void; onLeadList: (id: string) => void;
   manualPhone: string; setManualPhone: (phone: string) => void; onManualCall: () => void; callStartBusy: boolean;
@@ -2290,6 +2293,13 @@ function DialerView({ lead, queueCount, loading, leadListsLoading, call, elapsed
           <span className="empty-queue-icon"><Check size={28} /></span>
           <h2>{!campaigns.length ? "Ingen kampagner tildelt" : !selectedCampaignId ? "Vælg din kampagne" : "Du er up to date"}</h2>
           <p>{!campaigns.length ? "Bed din administrator om at tildele dig en kampagne." : !selectedCampaignId ? "Vælg en kampagne ovenfor. Du kan også ringe manuelt til et nummer uden lead." : "Der er ingen leads klar til opkald i dit udvalg lige nu. Alle fremtidige callbacks holdes uden for køen."}</p>
+          {selectedCampaignId && queueStats && <ul className="queue-why">
+            <li><strong>{queueStats.total.toLocaleString("da-DK")}</strong> leads i {selectedLeadListId ? "leadlisten" : "kampagnen"}{queueStats.total === 0 ? " – importér leads til kampagnen, eller vælg \"Alle leads i kampagnen\"." : ""}</li>
+            {queueStats.waiting > 0 && <li><strong>{queueStats.waiting.toLocaleString("da-DK")}</strong> venter på en fremtidig callback</li>}
+            {queueStats.closed > 0 && <li><strong>{queueStats.closed.toLocaleString("da-DK")}</strong> er afsluttet (ring ikke, forkert nummer eller kunde)</li>}
+            {queueStats.invalid_phone > 0 && <li><strong>{queueStats.invalid_phone.toLocaleString("da-DK")}</strong> har et ugyldigt telefonnummer</li>}
+            {queueStats.active_calls > 0 && <li><strong>{queueStats.active_calls.toLocaleString("da-DK")}</strong> er i et igangværende opkald</li>}
+          </ul>}
           {selectedCampaignId && <button className="button button-secondary" onClick={onRefresh}><ArrowDown size={15} /> Opdatér køen</button>}
           {selectedCampaignId && <form className="dialer-create-lead" onSubmit={(event) => void submitNewLead(event)}>
             <span className="panel-eyebrow">{selectedLeadListId ? "TILFØJ ET LEAD TIL DEN VALGTE LISTE" : "TILFØJ ET LEAD TIL KAMPAGNEN"}</span>

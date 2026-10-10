@@ -40,7 +40,25 @@ export async function GET(request: Request) {
     return apiError("Kunne ikke hente opkaldskøen.", 500);
   }
   const candidates = (data ?? []).filter((lead) => normalizePhone(lead.phone));
-  if (!candidates.length) return NextResponse.json({ data: [] });
+  // When nothing is ready, say why, so an empty queue is never a mystery.
+  async function explainEmpty(activeCalls = 0) {
+    const count = (build: (query: ReturnType<typeof base>) => ReturnType<typeof base>) => build(base()).then((result) => result.count ?? 0);
+    function base() {
+      let query = context.supabase.from("leads").select("id", { count: "exact", head: true })
+        .is("deleted_at", null).eq("campaign_id", campaignId!);
+      if (listId) query = query.eq("lead_list_id", listId);
+      return query;
+    }
+    const [total, closed, waiting] = await Promise.all([
+      count((query) => query),
+      count((query) => query.in("status", ["do_not_call", "wrong_number", "converted"])),
+      count((query) => query.not("status", "in", '("do_not_call","wrong_number","converted")').gt("next_follow_up_at", now)),
+    ]);
+    return NextResponse.json({ data: [], stats: {
+      total, closed, waiting, invalid_phone: (data ?? []).length - candidates.length, active_calls: activeCalls,
+    } });
+  }
+  if (!candidates.length) return explainEmpty();
   // Look up the team's few live calls instead of passing every lead id: 500 ids
   // make the request URL too long and the whole queue came back empty.
   const { data: activeCalls, error: activeError } = await context.supabase.from("calls")
@@ -63,5 +81,6 @@ export async function GET(request: Request) {
     if (freshPriority) return -freshPriority;
     return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
   });
+  if (!queue.length) return explainEmpty(active.size);
   return NextResponse.json({ data: queue });
 }
