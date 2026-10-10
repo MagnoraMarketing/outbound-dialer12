@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Building2, KeyRound, Plus, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, Building2, KeyRound, Plus, Trash2, Upload, UserRound } from "lucide-react";
 import { FormEvent, useState } from "react";
 
 export type PartnerLogin = { user_id: string; full_name: string; email: string; created_at: string };
@@ -12,7 +12,9 @@ export type PartnerCampaign = { id: string; name: string; partner_id: string | n
 export type PartnerData = { data: Partner[]; campaigns: PartnerCampaign[] };
 
 type Actions = {
-  onCreatePartner: (input: { name: string; contact_name: string; contact_email: string; contact_phone: string }) => Promise<void>;
+  onCreatePartner: (input: { name: string; contact_name: string; contact_email: string; contact_phone: string; campaign_name?: string }) => Promise<void>;
+  onCreateCampaign: (partnerId: string, name: string) => Promise<void>;
+  onUploadLeads: (campaignId: string) => void;
   onUpdatePartner: (input: { id: string; name?: string; contact_name?: string; contact_email?: string; contact_phone?: string; campaign_ids?: string[] }) => Promise<void>;
   onDeletePartner: (id: string) => Promise<void>;
   onCreateLogin: (input: { partner_id: string; full_name: string; email: string; password: string }) => Promise<void>;
@@ -33,7 +35,8 @@ export function PartnersView({ partners, campaigns, loading, ...actions }: { par
   </div>;
 }
 
-function PartnerCard({ partner, campaigns, onUpdatePartner, onDeletePartner, onCreateLogin, onDeleteLogin }: { partner: Partner; campaigns: PartnerCampaign[] } & Actions) {
+function PartnerCard({ partner, campaigns, onUpdatePartner, onDeletePartner, onCreateLogin, onDeleteLogin, onCreateCampaign, onUploadLeads }: { partner: Partner; campaigns: PartnerCampaign[] } & Actions) {
+  const [newCampaign, setNewCampaign] = useState("");
   const [editingCampaigns, setEditingCampaigns] = useState<string[] | null>(null);
   const [editingDetails, setEditingDetails] = useState(false);
   const [addingLogin, setAddingLogin] = useState(false);
@@ -70,7 +73,7 @@ function PartnerCard({ partner, campaigns, onUpdatePartner, onDeletePartner, onC
       <div className="pt-section-head"><span className="panel-eyebrow">KAMPAGNER · {own.length}</span>
         {!editingCampaigns && <button className="text-button" onClick={() => setEditingCampaigns(partner.campaign_ids)}>Vælg kampagner</button>}</div>
       {editingCampaigns ? <div className="pt-edit">
-        {!campaigns.length ? <p className="fb-muted">Opret først en kampagne under Importer leads.</p> : <div className="fb-campaign-checks">{campaigns.map((campaign) => {
+        {!campaigns.length ? <p className="fb-muted">Ingen kampagner endnu. Opret en direkte på partneren.</p> : <div className="fb-campaign-checks">{campaigns.map((campaign) => {
           const otherPartner = campaign.partner_id && campaign.partner_id !== partner.id;
           return <label key={campaign.id} className="fb-check" title={otherPartner ? "Tilhører en anden partner – flyttes hertil, hvis du vælger den" : undefined}>
             <input type="checkbox" checked={editingCampaigns.includes(campaign.id)}
@@ -80,8 +83,22 @@ function PartnerCard({ partner, campaigns, onUpdatePartner, onDeletePartner, onC
         })}</div>}
         <div className="pt-edit-actions"><button className="button button-secondary" onClick={() => setEditingCampaigns(null)}>Annuller</button>
           <button className="button button-primary" disabled={busy} onClick={() => void saveCampaigns()}>{busy ? "Gemmer …" : "Gem kampagner"}</button></div>
-      </div> : <div className="pt-chips">{own.map((campaign) => <span key={campaign.id} className="pt-chip">{campaign.name}</span>)}
-        {!own.length && <span className="fb-muted">Ingen kampagner tilknyttet. Partneren ser ingen møder, før en kampagne er valgt.</span>}</div>}
+      </div> : <>
+        <div className="pt-campaigns">{own.map((campaign) => <div key={campaign.id} className="pt-campaign-row">
+          <span className="pt-chip">{campaign.name}</span>
+          <button className="text-button" onClick={() => onUploadLeads(campaign.id)}><Upload size={13} /> Upload leads</button>
+        </div>)}
+          {!own.length && <span className="fb-muted">Ingen kampagner endnu. Opret en nedenfor, og upload leads til den.</span>}</div>
+        <form className="pt-new-campaign" onSubmit={(event) => {
+          event.preventDefault();
+          if (newCampaign.trim().length < 2) return;
+          setBusy(true);
+          void onCreateCampaign(partner.id, newCampaign.trim()).then(() => setNewCampaign("")).catch(() => undefined).finally(() => setBusy(false));
+        }}>
+          <input value={newCampaign} onChange={(event) => setNewCampaign(event.target.value)} maxLength={120} placeholder="Ny kampagne til partneren" aria-label="Ny kampagnes navn" />
+          <button className="button button-secondary button-small" disabled={busy || newCampaign.trim().length < 2}><Plus size={14} /> Opret kampagne</button>
+        </form>
+      </>}
     </section>
 
     <section className="pt-section">
@@ -132,7 +149,7 @@ function useSubmit(onClose: () => void) {
 
 function PartnerDialog({ partner, onClose, onSave }: {
   partner?: Partner; onClose: () => void;
-  onSave: (input: { name: string; contact_name: string; contact_email: string; contact_phone: string }) => Promise<void>;
+  onSave: (input: { name: string; contact_name: string; contact_email: string; contact_phone: string; campaign_name?: string }) => Promise<void>;
 }) {
   const { busy, error, run } = useSubmit(onClose);
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -141,6 +158,7 @@ function PartnerDialog({ partner, onClose, onSave }: {
     void run(() => onSave({
       name: String(form.get("name") ?? ""), contact_name: String(form.get("contact_name") ?? ""),
       contact_email: String(form.get("contact_email") ?? ""), contact_phone: String(form.get("contact_phone") ?? ""),
+      ...(partner ? {} : { campaign_name: String(form.get("campaign_name") ?? "") }),
     }));
   }
   return <DialogShell eyebrow="SAMARBEJDSPARTNER" title={partner ? `Rediger ${partner.name}` : "Opret samarbejdspartner"} onClose={onClose}>
@@ -149,6 +167,8 @@ function PartnerDialog({ partner, onClose, onSave }: {
       <label>Kontaktperson<input name="contact_name" maxLength={120} defaultValue={partner?.contact_name} /></label>
       <label>Kontakt-e-mail<input name="contact_email" type="email" maxLength={200} defaultValue={partner?.contact_email} /></label>
       <label>Telefon<input name="contact_phone" maxLength={40} defaultValue={partner?.contact_phone} /></label>
+      {!partner && <label>Første kampagne (valgfri)<input name="campaign_name" maxLength={120} placeholder="F.eks. Aibooking – efterår" />
+        <small className="fb-muted">Efter oprettelsen kommer du direkte videre til at uploade leads til kampagnen.</small></label>}
       {error && <p className="form-error">{error}</p>}
       <div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Annuller</button>
         <button className="button button-primary" disabled={busy}>{busy ? "Gemmer …" : partner ? "Gem" : "Opret partner"} <ArrowRight size={15} /></button></div>

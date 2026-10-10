@@ -1267,9 +1267,25 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
       setError("Vælg kolonner for virksomhed og telefonnummer før import.");
       return;
     }
-    if (!selectedCampaignId || !selectedLeadListId) {
-      setError("Vælg eller opret en kampagne og leadliste før import.");
+    if (!selectedCampaignId) {
+      setError("Vælg eller opret en kampagne før import.");
       return;
+    }
+    // Without a chosen lead list the file gets its own list in the campaign.
+    let leadListId = selectedLeadListId;
+    if (!leadListId) {
+      try {
+        const listName = `Import ${new Date().toLocaleDateString("da-DK")} ${new Date().toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" })}`;
+        const { data } = await api<{ data: LeadList }>(`/api/campaigns/${selectedCampaignId}/lists`, {
+          method: "POST", body: JSON.stringify({ name: listName }),
+        });
+        setLeadLists((current) => [data, ...current]);
+        setSelectedLeadListId(data.id);
+        leadListId = data.id;
+      } catch (listError) {
+        setError(listError instanceof Error ? listError.message : "Leadlisten kunne ikke oprettes.");
+        return;
+      }
     }
     setCsvBusy(true);
     setCsvProgress(0);
@@ -1286,7 +1302,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             rows: csvRows.slice(offset, offset + chunkSize),
             mapping: csvMapping,
             row_offset: offset,
-            lead_list_id: selectedLeadListId,
+            lead_list_id: leadListId,
           }),
         });
         const result = await response.json().catch(() => null) as {
@@ -1664,7 +1680,33 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             meetings={adminFeedback} campaigns={campaigns} loading={loading} onOpenPartners={() => setPage("partners")} />}
           {page === "partners" && profile.role === "admin" && <PartnersView
             partners={partnerData.data} campaigns={partnerData.campaigns} loading={loading}
-            onCreatePartner={(input) => partnerAction("/api/admin/partners", "POST", input, "Samarbejdspartneren er oprettet.")}
+            onCreatePartner={async (input) => {
+              const result = await api<{ data: { id: string; campaign_id?: string | null }; campaign_error?: string }>("/api/admin/partners", {
+                method: "POST", body: JSON.stringify(input),
+              });
+              void loadPageData("partners");
+              if (result.campaign_error) { setError(result.campaign_error); return; }
+              if (result.data.campaign_id) {
+                // Straight on to uploading leads to the new campaign.
+                setSelectedCampaignId(result.data.campaign_id);
+                setSelectedLeadListId("");
+                setPage("import");
+                setNotice("Partner og kampagne er oprettet. Upload nu leads til kampagnen.");
+              } else {
+                setNotice("Samarbejdspartneren er oprettet.");
+              }
+            }}
+            onCreateCampaign={async (partnerId, name) => {
+              try {
+                await api("/api/campaigns", { method: "POST", body: JSON.stringify({ name, partner_id: partnerId }) });
+                setNotice(`Kampagnen ${name} er oprettet.`);
+                void loadPageData("partners");
+              } catch (campaignError) {
+                setError(campaignError instanceof Error ? campaignError.message : "Kampagnen kunne ikke oprettes.");
+                throw campaignError;
+              }
+            }}
+            onUploadLeads={(campaignId) => { setSelectedCampaignId(campaignId); setSelectedLeadListId(""); setPage("import"); }}
             onUpdatePartner={(input) => partnerAction("/api/admin/partners", "PATCH", input, "Ændringerne er gemt.")}
             onDeletePartner={(id) => partnerAction(`/api/admin/partners?id=${encodeURIComponent(id)}`, "DELETE", null, "Samarbejdspartneren er slettet.")}
             onCreateLogin={(input) => partnerAction("/api/admin/partners/users", "POST", input, "Login er oprettet. Partneren logger ind på /kunde.")}
@@ -2347,6 +2389,18 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
   return <div className="view">
     <div className="page-heading"><div><span className="eyebrow">DIN PIPELINE, PÅ DINE PRÆMISSER</span><h1>Importer leads</h1><p>Kom godt fra start med dine eksisterende virksomhedslister.</p></div><span className="secure-tag"><CheckCircle2 size={15} /> Sikker import</span></div>
     <div className="import-steps"><div className="step-active"><span>01</span> Upload fil</div><i /><div className={headers.length ? "step-active" : ""}><span>02</span> Match kolonner</div><i /><div className={progress === 100 ? "step-active" : ""}><span>03</span> Importér</div></div>
+    <div className="campaign-import panel import-campaign-first">
+      <div><span className="panel-eyebrow">TRIN 1 · KAMPAGNE</span><h2>Hvilken kampagne skal leadsene på?</h2><p>Vælg en kampagne, eller opret en ny. Leadliste er valgfri: uden en liste får filen sin egen liste i kampagnen.</p></div>
+      <label>Kampagne<select value={selectedCampaignId} onChange={(event) => onCampaign(event.target.value)}>
+        <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+      </select></label>
+      <div className="campaign-create-row"><input value={newCampaignName} onChange={(event) => onNewCampaignName(event.target.value)} maxLength={120} placeholder="Ny kampagnes navn" /><button className="button button-secondary button-small" onClick={onCreateCampaign} disabled={campaignBusy || newCampaignName.trim().length < 2}>Opret kampagne</button></div>
+      <label>Leadliste (valgfri)<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
+        <option value="">Ny liste til denne fil</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
+      </select></label>
+      <div className="campaign-create-row"><input value={newLeadListName} onChange={(event) => onNewLeadListName(event.target.value)} maxLength={120} placeholder="Ny leadlistes navn" disabled={!selectedCampaignId} /><button className="button button-secondary button-small" onClick={onCreateLeadList} disabled={campaignBusy || !selectedCampaignId || newLeadListName.trim().length < 2}>Opret leadliste</button></div>
+      <p className="assignment-note">Kampagner til en samarbejdspartner kan også oprettes direkte under Samarbejdspartnere. Tildel adgang til sælgere under Team.</p>
+    </div>
     <div className="panel import-panel">
       {!headers.length ? <button className={`dropzone ${dragging ? "dropzone-active" : ""}`} onClick={() => fileRef.current?.click()}
         onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
@@ -2355,24 +2409,12 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
         <span className="upload-icon"><FileSpreadsheet size={23} /></span><strong>Slip din CSV-fil her</strong><span>eller <u>vælg en fil fra din computer</u></span><small>CSV · Op til 10.000 virksomheder · UTF-8</small>
       </button> : <div className="import-content">
         <div className="import-file-row"><span className="upload-icon upload-icon-small"><FileSpreadsheet size={18} /></span><span><strong>{rows.length.toLocaleString("da-DK")} rækker fundet</strong><small>{headers.length} kolonner · CSV-fil</small></span><button className="text-button" onClick={() => fileRef.current?.click()}>Vælg en anden fil</button><input ref={fileRef} hidden type="file" accept=".csv,text/csv" onChange={(event) => onFile(event.target.files?.[0])} /></div>
-        <div className="campaign-import panel">
-          <div><span className="panel-eyebrow">ORGANISÉR DIN LEADLISTE</span><h2>Vælg kampagne og leadliste</h2><p>Alle importerede leads knyttes til den valgte liste.</p></div>
-          <label>Kampagne<select value={selectedCampaignId} onChange={(event) => onCampaign(event.target.value)}>
-            <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
-          </select></label>
-          <div className="campaign-create-row"><input value={newCampaignName} onChange={(event) => onNewCampaignName(event.target.value)} maxLength={120} placeholder="Ny kampagnes navn" /><button className="button button-secondary button-small" onClick={onCreateCampaign} disabled={campaignBusy || newCampaignName.trim().length < 2}>Opret kampagne</button></div>
-          <label>Leadliste<select value={selectedLeadListId} onChange={(event) => onLeadList(event.target.value)} disabled={!selectedCampaignId}>
-            <option value="">Vælg leadliste …</option>{leadLists.map((list) => <option key={list.id} value={list.id}>{list.name}</option>)}
-          </select></label>
-          <div className="campaign-create-row"><input value={newLeadListName} onChange={(event) => onNewLeadListName(event.target.value)} maxLength={120} placeholder="Ny leadlistes navn" disabled={!selectedCampaignId} /><button className="button button-secondary button-small" onClick={onCreateLeadList} disabled={campaignBusy || !selectedCampaignId || newLeadListName.trim().length < 2}>Opret leadliste</button></div>
-          <p className="assignment-note">Importerede leads placeres på den valgte kampagne og leadliste. Tildel adgang til brugere under Team.</p>
-        </div>
         <div className="mapping-header"><div><h2>Match dine kolonner</h2><p>Vælg hvilken CSV-kolonne, der svarer til hvert felt.</p></div><span className="match-count">{Object.values(mapping).filter(Boolean).length} felter matchet</span></div>
         <div className="mapping-grid">{csvFields.map((field) => <label className="mapping-row" key={field.key}><span>{field.label}{["company_name", "phone"].includes(field.key) && <i> * </i>}</span><ArrowRight size={14} /><select value={mapping[field.key] || ""} onChange={(event) => onMapping(field.key, event.target.value)}><option value="">Spring over</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div>
         <div className="preview-table"><div className="preview-heading"><strong>Forhåndsvisning</strong><span>De første 5 rækker</span></div><div className="table-scroll"><table><thead><tr>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <th key={field.key}>{field.label}</th>)}</tr></thead><tbody>{rows.slice(0, 5).map((row, index) => <tr key={index}>{csvFields.filter((field) => mapping[field.key]).slice(0, 5).map((field) => <td key={field.key}>{row[mapping[field.key]!] || "—"}</td>)}</tr>)}</tbody></table></div></div>
         {!!errors.length && <div className="import-errors"><strong>{errors.length} rækker blev sprunget over</strong>{errors.slice(0, 10).map((item, index) => <span key={index}>Række {item.row}: {item.reason}</span>)}</div>}
         {busy && <div className="progress-block"><div><span>Importerer sikkert …</span><strong>{progress}%</strong></div><i><b style={{ width: `${progress}%` }} /></i></div>}
-        <div className="import-footer"><span><CheckCircle2 size={15} /> Dubletter og ugyldige numre kontrolleres automatisk.</span><button className="button button-primary" disabled={busy || !rows.length} onClick={onImport}>{busy ? "Importerer …" : `Importér ${rows.length.toLocaleString("da-DK")} rækker`} <ArrowRight size={15} /></button></div>
+        <div className="import-footer"><span><CheckCircle2 size={15} /> Dubletter og ugyldige numre kontrolleres automatisk.</span><button className="button button-primary" disabled={busy || !rows.length || !selectedCampaignId} onClick={onImport}>{busy ? "Importerer …" : !selectedCampaignId ? "Vælg en kampagne først" : `Importér ${rows.length.toLocaleString("da-DK")} rækker`} <ArrowRight size={15} /></button></div>
       </div>}
     </div>
     <div className="import-hint"><span><Sparkles size={15} /></span><p><strong>Godt at vide</strong> Dine data bliver kun synlige for dig og dit team. Leads med samme telefonnummer eller firmanavn bliver sprunget over.</p></div>
