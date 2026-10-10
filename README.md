@@ -1,48 +1,75 @@
 # Nordcall
 
-A Danish-language B2B CRM and outbound calling workspace built with Next.js, Supabase and Telnyx. The application keeps private telephony and database credentials on the server and uses Supabase Row Level Security for data access.
+**The outbound sales workspace that turns every call into progress.**
 
-## Run locally
+Nordcall brings everything a B2B sales team needs into one calm, focused place: call lists, campaigns, meetings, partner feedback and motivation. Sellers spend their time talking to customers, not juggling tools, and managers see exactly what is happening, campaign by campaign.
 
-1. Install Node.js 20+ and dependencies with `npm install`.
-2. In the shared Supabase project, add `nordcall` to **Project Settings → API → Exposed schemas** (keep existing schemas), then apply `supabase/migrations/20261005000000_initial_schema.sql` for a new setup, followed by newer migrations in timestamp order. Migrations 200–500 add campaigns, assignments, campaign leads, targets and messages; 600 adds budget activities and Cal.com storage; 700 stores per-user Telnyx WebRTC credentials; 800 adds admin reporting and private recording storage. Nordcall tables live in the separate `nordcall` schema. Nordcall signups are marked explicitly so the auth trigger creates `nordcall.profiles` only for Nordcall users.
-3. Copy `.env.example` to `.env.local`, and add the project URL, anon key and service-role key. For outbound calls, configure the server-only Telnyx API key, a SIP Credential Connection ID in `TELNYX_WEBRTC_CONNECTION_ID`, and an E.164 caller number in `TELNYX_PHONE_NUMBER`. The Telnyx connection must allow outbound calling and have that number available as caller ID. The browser prompts the seller for microphone permission; production use requires HTTPS.
-4. In Supabase Authentication → URL Configuration, add the production app origin, `/admin`, and `/auth/callback` URLs to **Redirect URLs**. Add localhost URLs only for local testing, and preserve the existing Site URL and other app redirects on shared projects. Set `NEXT_PUBLIC_APP_URL` to production and request password resets from the production app. Password recovery uses `/auth/callback` and returns to the login page where it was requested. The first Nordcall user can sign up and create a team; that user becomes the team administrator. Accounts with the administrator role can sign in at both `/` and `/admin`; regular users use `/`.
-5. Run `npm run dev` and open `http://localhost:3000`.
+---
 
-`npm run lint` runs ESLint, `npm run typecheck` checks TypeScript and `npm run build` creates a production build. The API returns a clear configuration error if Supabase has not been configured. Do not put a Supabase service-role key or Telnyx API key in a `NEXT_PUBLIC_` variable.
+## Why Nordcall
 
-## Included
+- **More conversations, less admin.** Sellers open their queue and start calling. Every outcome, note and follow-up is captured in seconds.
+- **Built for teams.** Administrators set up campaigns, lead lists, numbers and permissions once, and every seller gets exactly what they need.
+- **Closed loop with your clients.** Partners see the meetings booked for them and rate them, so sellers learn what a great meeting looks like.
+- **Motivation built in.** Goals, progress and friendly competition keep the energy high all day.
 
-- Supabase email/password authentication, user profiles, teams, role-aware policies and server-side session refresh.
-- Lead list/search, lead creation, assignment, status updates and server-validated CSV import with duplicate detection.
-- Admin-managed campaigns and campaign-specific lead lists; admins can assign each to individual team members and import leads directly to a selected member.
-- Manually created leads require a campaign and may optionally be added to one of its lead lists. Admins can create a list while adding a lead.
-- The Opkald workspace filters its queue to the selected campaign and optional lead list, supports manual dialing without a lead, and can create a confirmed lead in that campaign/list.
-- Weekly and monthly booked-meeting targets per seller, with optional campaign targets, individual progress on the dashboard and team progress/editing for admins.
-- Persistent in-app admin messages to the whole team, a campaign, or a lead list; unread items appear in the notification bell. Browser push is not used.
-- Manual Telnyx calls are stored in call history without creating placeholder leads.
-- Telnyx WebRTC calls connect the seller's browser headset directly; per-user credentials and JWTs are issued server-side so the Telnyx API key stays private. Calls can be recorded only when an admin enables recording for that user's profile; recordings are stored privately and playback is admin-only.
-- Queue, callbacks, meetings and daily dashboard API surfaces.
-- Partners (samarbejdspartnere): admins create partners, attach campaigns and create partner logins. Partner users sign in at `/kunde`, see meetings booked on their partner's campaigns in a calendar and list, and rate each held meeting as *Godt møde*, *Mindre godt møde* or *Ikke kvalificeret* with a note. A meeting without a status 12 hours after it started shows as overdue: the partner sees a reminder in the portal, the seller sees the status and note on the meeting with a "Ny" marker and a badge on Møder, and admins follow overdue meetings and all feedback under **Mødefeedback**. Partner logins have no team profile and only reach their own data through server routes.
-- Meeting links on bookings can only be set by administrators.
-- **Magnora Empire** (Spil): a business-tycoon game for team members with virtual kroner, levels, an isometric city, missions and Magnora Market, which unlocks at 100.000 DKK of administrator-approved sales earnings (**Godkend indtjening**). See [docs/magnora-empire.md](docs/magnora-empire.md).
-- **Telefonnumre** (admin): numbers are fetched from the telephony account (`GET /v2/phone_numbers` with `TELNYX_API_KEY`) or added manually, assigned per campaign, and one is marked as the team default. The server picks the caller number for each call (campaign number → team default → `TELNYX_PHONE_NUMBER` as a legacy fallback) and stores it on the call; sellers never choose it. Apply `20261010110000_campaign_phone_numbers.sql`.
-- Sellers' settings show only what is relevant to them (profile, password change, recording status, microphone check); telephony and auth details are admin-only.
-- SQL migration with indexes, audit events and Row Level Security policies.
+## Features
 
-## Deployment and compliance
+### Calling that just works
+- Call straight from the browser with a headset, no extra software.
+- A focused call queue per campaign and lead list, plus a dialpad for one-off numbers.
+- Log outcomes, notes, callbacks and meetings in the flow of the call.
+- Every campaign calls from its own dedicated number, chosen by the administrator.
+- Full call history with optional, admin-controlled call recording.
 
-### Deploy to Vercel
+### Campaigns and leads
+- Create campaigns and import lead lists from a spreadsheet in a few clicks.
+- Duplicates and invalid numbers are filtered out automatically.
+- Create a campaign for a partner and upload its leads in one flow.
+- Admins decide which campaigns and lists each seller can reach, or give full access by default.
 
-The repository is configured for Next.js on Vercel in `vercel.json`. To deploy from GitHub, sign in to Vercel, choose **Add New → Project**, import `MagnoraMarketing/outbound-dialer12`, and deploy. Vercel will build each push to the production branch and create preview deployments for other branches.
+### Meetings and partner feedback
+- Book meetings directly from a call.
+- Partners get their own portal with a calendar of every meeting booked for them.
+- After each meeting the partner rates it (*good*, *less good* or *not qualified*) and leaves a note the seller can see.
+- Friendly reminders when feedback is overdue, and a full overview for administrators.
 
-Alternatively, from the repository root run `npx vercel login`, then `npx vercel link` to link the local checkout to your Vercel project. Run `npx vercel` for a preview deployment and `npx vercel --prod` for production.
+### Goals, budgets and earnings
+- Weekly and monthly targets for meetings and sales, per seller and per campaign.
+- Live progress on every seller's dashboard.
+- Register sales and upsells; administrators approve earnings with one click.
+- Transparent monthly overview of what each seller has earned.
 
-In Vercel, add the variables from `.env.example` under **Project → Settings → Environment Variables**. `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are required. Admin invitations, call records and private recordings, user/list assignments, CSV lead imports, and Telnyx WebRTC credential storage require the server-only `SUPABASE_SERVICE_ROLE_KEY`. For browser calling, also set `TELNYX_API_KEY`, `TELNYX_WEBRTC_CONNECTION_ID`, and `TELNYX_PHONE_NUMBER`; the Telnyx connection must permit outbound calls and the number must be an authorized caller ID. Set `NEXT_PUBLIC_APP_URL` to the final public HTTPS URL (for example `https://app.example.dk`). Redeploy after changing environment variables.
+### Motivation and fun
+- **Magnora Empire:** a business-tycoon game where real, approved results grow a virtual company. Buy offices, level up, complete missions and unlock the Magnora Market to trade with colleagues.
+- **WhoIsTheBest:** a quick game for short breaks, with a shared team leaderboard and a champion to beat.
+- Team-wide celebrations when someone reaches a big milestone.
 
-To use a custom domain, open **Project → Settings → Domains** in Vercel, add your domain, and follow the DNS records Vercel displays at your DNS provider. After Vercel verifies it, set `NEXT_PUBLIC_APP_URL` to that domain and redeploy. In the shared Supabase project's Authentication → URL Configuration, preserve the existing **Site URL** and redirect entries; add the exact Nordcall app URL, `https://outbound-dialer12.vercel.app` (or `https://app.example.dk` for a custom domain), and callback URL, `https://outbound-dialer12.vercel.app/auth/callback` (or `https://app.example.dk/auth/callback`), to **Redirect URLs**. Also add `http://localhost:3000` and `http://localhost:3000/auth/callback` only if local development is needed. This allows Nordcall confirmation and password-reset links without changing the default redirect used by other apps. Configure the Telnyx connection webhook as `https://app.example.dk/api/calls/webhook`, and set its Ed25519 webhook public key in `TELNYX_PUBLIC_KEY`.
+### Built for administrators
+- One admin front page for the team, campaigns, numbers, partners, feedback and earnings.
+- Invite colleagues in seconds and switch between the admin view and the seller view.
+- Messages to the whole team, a campaign or a single lead list.
+- Clear subscription overview with talk minutes used per period.
 
-Telephony, recording, contact use, retention and consent requirements depend on your use case and jurisdiction. Configure these with qualified counsel before production use. Recording is disabled by default and can be enabled per user by an admin. Before enabling it, disclose recording to participants and determine lawful basis, retention and deletion procedures. The dialer never automatically initiates calls; power dialing must not be used to bypass legal restrictions. Add team memberships through an administrator-controlled provisioning flow before onboarding multiple users.
+### Private and secure
+- Every team's data is private to that team.
+- Sellers and partners only ever see what is relevant to them.
+- Sensitive actions are restricted to administrators and recorded in an audit trail.
 
-Apply migration `20261005080000_admin_insights_and_recordings.sql` before deploying admin statistics and private call recording. Apply `20261010100000_magnora_empire_game.sql` before deploying the game; it needs `SUPABASE_SERVICE_ROLE_KEY` on the server. Apply `20261009090000_partners_and_meeting_feedback.sql` before deploying the partner portal, and add the production `/kunde` URL to Supabase Redirect URLs so partner password resets return to the portal. Allow the production origin, `/admin`, and `/auth/callback` in Supabase Redirect URLs; keep the project's existing Site URL on shared Supabase projects. Keep localhost redirects only for local development. `NEXT_PUBLIC_APP_URL` must match the production origin so password recovery from `/` and `/admin` returns to the correct site. If Supabase redirects a recovery email to localhost, check that the production callback URL is allow-listed and that the reset was requested from the production app.
+---
+
+## Plans
+
+Nordcall is available as an add-on to AIbooking:
+
+| Plan | Talk time | Price |
+|---|---|---|
+| Free trial | 10 minutes for 7 days | Free, no card needed |
+| Outbound 1,000 | 1,000 minutes per month | 500 DKK / month |
+| Outbound 2,000 | 2,000 minutes per month | 800 DKK / month |
+
+---
+
+## License
+
+See [LICENSE](LICENSE).
