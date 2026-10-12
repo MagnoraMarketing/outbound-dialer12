@@ -3,13 +3,14 @@
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import {
-  AlertTriangle, ArrowRight, Bell, CalendarDays, CalendarPlus, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, ExternalLink,
-  List, LogOut, Mail, Phone, Share, UserRound, X,
+  AlertTriangle, ArrowRight, Bell, CalendarDays, CalendarPlus, CheckCircle2, ChevronLeft, ChevronRight, Clock3, ExternalLink,
+  List, LogOut, Mail, Phone, UserRound, X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   copenhagenDayKey, feedbackLabels, meetingState, meetingStateLabels, meetingTypeLabel, type FeedbackStatus,
 } from "@/lib/feedback-labels";
+import { InstallAppButton } from "@/components/install-app-button";
 
 type CustomerMeeting = {
   id: string; meeting_at: string; meeting_type: string; notes: string; calendar_url: string | null;
@@ -207,7 +208,7 @@ export function CustomerPortal() {
         {authMode === "forgot" && <button type="button" className="text-button auth-resend" onClick={() => setAuthMode("login")}>Tilbage til login</button>}
       </form>}
       <div className="auth-privacy"><CheckCircle2 size={15} /> Du ser kun møder fra dine egne kampagner</div>
-      <div className="cp-auth-install"><InstallAppButton /></div>
+      <div className="cp-auth-install"><InstallAppButton serviceWorker="/kunde-sw.js" scope="/kunde" /></div>
     </div><div className="auth-caption">Kundeportal for Nordcall.</div></div>;
   }
 
@@ -225,7 +226,7 @@ export function CustomerPortal() {
         <span className="cp-bell" aria-label={overdue.length ? `${overdue.length} møder mangler status` : "Ingen påmindelser"}>
           <Bell size={17} />{overdue.length > 0 && <i>{overdue.length}</i>}
         </span>
-        <InstallAppButton />
+        <InstallAppButton serviceWorker="/kunde-sw.js" scope="/kunde" />
         <span className="cp-customer"><strong>{customer?.company_name || "Kunde"}</strong><small>{customer?.email}</small></span>
         <button className="icon-button" onClick={() => void logout()} aria-label="Log ud"><LogOut size={16} /></button>
       </div>
@@ -392,42 +393,4 @@ function CalendarSubscribe({ campaigns }: { campaigns: CustomerCampaign[] }) {
       })}
     </div>}
   </div>;
-}
-
-type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
-
-// Lets the customer keep the portal as an app on the phone or desktop.
-function InstallAppButton() {
-  const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
-  const [installed, setInstalled] = useState(false);
-  const [iosHelp, setIosHelp] = useState(false);
-  const [isIos, setIsIos] = useState(false);
-
-  useEffect(() => {
-    if ("serviceWorker" in navigator) void navigator.serviceWorker.register("/kunde-sw.js", { scope: "/kunde" }).catch(() => undefined);
-    const standalone = window.matchMedia("(display-mode: standalone)").matches
-      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-    setInstalled(standalone);
-    setIsIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
-    const onPrompt = (event: Event) => { event.preventDefault(); setPromptEvent(event as InstallPromptEvent); };
-    const onInstalled = () => { setInstalled(true); setPromptEvent(null); };
-    window.addEventListener("beforeinstallprompt", onPrompt);
-    window.addEventListener("appinstalled", onInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onPrompt);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
-  }, []);
-
-  if (installed || (!promptEvent && !isIos)) return null;
-  return <span className="cp-install">
-    <button className="button button-secondary button-small" onClick={async () => {
-      if (promptEvent) {
-        await promptEvent.prompt();
-        await promptEvent.userChoice.catch(() => null);
-        setPromptEvent(null);
-      } else setIosHelp(!iosHelp);
-    }}><Download size={14} /> Hent app</button>
-    {iosHelp && <span className="cp-install-help" role="note">Tryk på <Share size={13} /> Del i Safari og vælg <strong>Føj til hjemmeskærm</strong>.</span>}
-  </span>;
 }
