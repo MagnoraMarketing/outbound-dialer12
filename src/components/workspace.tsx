@@ -1553,7 +1553,7 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
                 ? <div className="auth-switch">{authMode === "login" ? "Nyt på Nordcall?" : "Har du allerede en konto?"}
                   <button onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); setAuthMessage(""); }}>{authMode === "login" ? "Opret et team" : "Log ind"}</button>
                 </div>
-                : <div className="auth-switch"><button onClick={() => { window.location.href = adminEntry ? "/" : "/admin"; }}>{adminEntry ? "Brugerlogin" : "Adminlogin"}</button></div>}
+                : adminEntry ? <div className="auth-switch"><button onClick={() => { window.location.href = "/"; }}>Brugerlogin</button></div> : null}
               <div className="auth-privacy"><CheckCircle2 size={15} /> Data forbliver under dit teams adgangskontrol</div>
               {authMode === "login" && <div className="auth-app">
                 <Image className="auth-app-qr" src="/app-qr" alt="QR-kode til Nordcall-appen" width={88} height={88} unoptimized />
@@ -1614,8 +1614,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           })}
         </nav>
         <div className="sidebar-bottom">
-          {adminAccount && <button className="button button-secondary button-wide view-switch" onClick={() => { window.location.href = adminEntry ? "/" : "/admin"; }}>
-            {adminEntry ? <><Eye size={15} /> Se som sælger</> : <><Settings2 size={15} /> Gå til admin</>}
+          {adminEntry && adminAccount && <button className="button button-secondary button-wide view-switch" onClick={() => { window.location.href = "/"; }}>
+            <Eye size={15} /> Se som sælger
           </button>}
           <div className="help-card"><span className="help-icon"><CircleHelp size={16} /></span><strong>Har du brug for en hånd?</strong><span>Vi er lige her, når du har brug for os.</span><a href="mailto:hej@nordcall.dk">Skriv til support <ArrowUpRight size={13} /></a></div>
           <button className="profile-row" onClick={logout}>
