@@ -2,6 +2,7 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import Image from "next/image";
 import Papa from "papaparse";
 import {
   Activity, ArrowDown, ArrowDownLeft, ArrowRight, ArrowUpRight, BarChart3, Bell, Building2,
@@ -15,6 +16,7 @@ import {
   AdminFeedbackView, FeedbackBadge, MeetingFeedbackNote, SellerFeedbackPanel,
   type AdminFeedbackMeeting, type MeetingFeedbackInfo,
 } from "@/components/meeting-feedback-views";
+import { InstallAppButton } from "@/components/install-app-button";
 import { PartnersView, type PartnerData } from "@/components/partners-view";
 import { GamesHub } from "@/components/game/games-hub";
 import { SubscriptionView } from "@/components/subscription-view";
@@ -1553,6 +1555,15 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
                 </div>
                 : <div className="auth-switch"><button onClick={() => { window.location.href = adminEntry ? "/" : "/admin"; }}>{adminEntry ? "Brugerlogin" : "Adminlogin"}</button></div>}
               <div className="auth-privacy"><CheckCircle2 size={15} /> Data forbliver under dit teams adgangskontrol</div>
+              {authMode === "login" && <div className="auth-app">
+                <Image className="auth-app-qr" src="/app-qr" alt="QR-kode til Nordcall-appen" width={88} height={88} unoptimized />
+                <div className="auth-app-copy">
+                  <strong>Hent appen på mobilen</strong>
+                  <p className="auth-app-desktop">Scan koden med telefonens kamera, og føj Nordcall til hjemmeskærmen.</p>
+                  <p className="auth-app-mobile">Føj Nordcall til hjemmeskærmen, så du har dialeren lige ved hånden.</p>
+                  <InstallAppButton serviceWorker="/app-sw.js" scope="/" />
+                </div>
+              </div>}
             </>
           )}
         </div>

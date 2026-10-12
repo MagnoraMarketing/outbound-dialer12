@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import "./globals.css";
 import { siteUrl } from "@/lib/site-url";
@@ -7,7 +7,12 @@ export const metadata: Metadata = {
   title: "Nordcall — B2B salg, der føles enkelt",
   description: "Dansk CRM og outbound dialer til professionelle B2B-salgsteams.",
   metadataBase: new URL(siteUrl()),
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Nordcall", statusBarStyle: "default" },
+  icons: { icon: "/app-icon/192.png", apple: "/app-icon/180.png" },
 };
+
+export const viewport: Viewport = { themeColor: "#3249ce" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

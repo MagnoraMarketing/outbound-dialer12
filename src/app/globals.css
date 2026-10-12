@@ -58,6 +58,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .auth-switch button, .text-button { padding: 0; border: 0; color: #435bd7; background: none; font-size: inherit; font-weight: 600; cursor: pointer; }
 .auth-privacy { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 27px; padding-top: 17px; border-top: 1px solid #f0f2f7; color: #8f9aae; font-size: 10px; }
 .auth-privacy svg { color: #54ad94; }
+.auth-app { display: flex; align-items: center; gap: 14px; margin-top: 16px; padding: 12px; border: 1px solid #edf0f6; border-radius: 12px; background: #fafbfe; }
+.auth-app-qr { flex: none; width: 88px; height: 88px; border-radius: 8px; background: #fff; }
+.auth-app-copy { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 4px; }
+.auth-app-copy strong { color: #1b2540; font-size: 12px; }
+.auth-app-copy p { margin: 0; color: #8f9aae; font-size: 11px; line-height: 1.45; }
+.auth-app-copy .cp-install { margin-top: 4px; }
+.auth-app-copy .cp-install-help { right: auto; left: 0; }
+.auth-app-mobile { display: none; }
+@media (max-width: 680px) {
+  .auth-app-qr, .auth-app-desktop { display: none; }
+  .auth-app-mobile { display: block; }
+}
 .auth-caption { position: absolute; bottom: 23px; z-index: 1; color: #9ba4b5; font-size: 11px; }
 .auth-caption span { color: #6d7890; font-weight: 600; }
 .form-error, .form-success { margin: 0; padding: 10px 12px; border-radius: 7px; font-size: 12px; }
