@@ -1371,3 +1371,49 @@ select.status-pill { max-width: 124px; padding-right: 18px; cursor: pointer; }
 .cs-number form { display: inline-flex; align-items: center; gap: 6px; }
 .cs-number .form-error { flex-basis: 100%; margin: 0; font-size: 10px; }
 .queue-why { display: grid; gap: 4px; margin: 0 0 10px; padding: 10px 14px; border-radius: 8px; background: #f6f8fc; color: #59657d; font-size: 11px; list-style: none; text-align: left; }
+
+/* Budget page: campaign goal setup, progress and recent activity */
+.budget-setup { padding: 20px 22px; margin-bottom: 16px; display: grid; gap: 16px; }
+.budget-setup-heading h2, .budget-results-heading h2, .budget-activity-list .panel-heading h2 { margin: 4px 0 6px; color: var(--ink); font: 700 17px var(--font-display); letter-spacing: -.25px; }
+.budget-setup-heading p { margin: 0; color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.campaign-budget-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; gap: 12px; }
+.campaign-budget-form label { display: grid; gap: 6px; min-width: 0; color: #485570; font-size: 12px; font-weight: 600; }
+.campaign-budget-form input, .campaign-budget-form select { width: 100%; min-width: 0; min-height: 42px; padding: 0 12px; border: 1px solid #e3e8f0; border-radius: 8px; color: #23304c; background: #fff; font-size: 14px; outline: none; transition: border .2s, box-shadow .2s; }
+.campaign-budget-form input:focus, .campaign-budget-form select:focus { border-color: #7887eb; box-shadow: 0 0 0 3px rgba(76, 96, 221, .09); }
+.campaign-budget-form select { cursor: pointer; }
+.budget-form-footer { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; border-top: 1px solid #eff1f5; color: var(--ink-soft); font-size: 13px; }
+.budget-form-footer strong { color: var(--ink); }
+.budget-form-footer .button { white-space: nowrap; }
+.budget-results { display: grid; gap: 14px; }
+.budget-results-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.live-tag { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; font-weight: 600; }
+.live-tag i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(25,165,124,.15); }
+.budget-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.budget-commission-card { display: grid; gap: 4px; padding: 18px 20px; }
+.budget-commission-card span, .budget-commission-card small { color: var(--muted); font-size: 12px; }
+.budget-commission-card strong { color: var(--ink); font: 700 22px var(--font-display); }
+.budget-commission-forecast strong { color: var(--blue); }
+.budget-activity-card { display: grid; gap: 10px; padding: 18px 20px; }
+.budget-activity-title { display: flex; align-items: center; gap: 10px; }
+.budget-activity-title > span { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: var(--blue); background: #eef1ff; }
+.budget-activity-title div { display: grid; gap: 2px; }
+.budget-activity-title strong { color: var(--ink); font-size: 14px; }
+.budget-activity-title small, .budget-activity-foot { color: var(--muted); font-size: 12px; }
+.budget-activity-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; }
+.budget-activity-list { display: grid; gap: 10px; padding: 18px 20px; }
+.budget-activity-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid #f1f3f7; font-size: 13px; }
+.budget-activity-row time { margin-left: auto; color: var(--muted); font-size: 12px; }
+.activity-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--blue); }
+.activity-sale { background: var(--green); }
+.activity-upsell { background: #e0a21b; }
+.budget-no-activity { margin: 0; color: var(--muted); font-size: 13px; }
+.budget-duplicate-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.budget-unconfigured { display: flex; align-items: center; gap: 12px; padding: 18px 20px; color: var(--ink-soft); }
+.budget-unconfigured > svg { flex: none; color: var(--blue); }
+.budget-unconfigured p { margin: 0; font-size: 13px; }
+@media (max-width: 640px) {
+  .budget-setup { padding: 18px 16px; }
+  .campaign-budget-form { grid-template-columns: 1fr; }
+  .budget-form-footer { flex-direction: column; align-items: stretch; }
+  .budget-form-footer .button { width: 100%; }
+}
