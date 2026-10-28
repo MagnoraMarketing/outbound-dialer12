@@ -26,9 +26,23 @@ export function periodBoundaries() {
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
   const monthStart = `${today.slice(0, 7)}-01`;
   return {
+    dayStart: copenhagenMidnightUtc(today),
+    nextDay: copenhagenMidnightUtc(dateKey(new Date(todayDate.getTime() + 86400_000))),
     weekStart: copenhagenMidnightUtc(dateKey(monday)),
     nextWeek: copenhagenMidnightUtc(dateKey(new Date(monday.getTime() + 7 * 86400_000))),
     monthStart: copenhagenMidnightUtc(monthStart),
     nextMonth: copenhagenMidnightUtc(dateKey(new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth() + 1, 1)))),
   };
+}
+
+// Monday–Friday count for the current Danish month: the month's working days.
+export function workdaysThisMonth() {
+  const today = copenhagenToday();
+  const year = Number(today.slice(0, 4));
+  const month = Number(today.slice(5, 7)) - 1;
+  let count = 0;
+  for (let day = new Date(Date.UTC(year, month, 1)); day.getUTCMonth() === month; day.setUTCDate(day.getUTCDate() + 1)) {
+    if (day.getUTCDay() % 6 !== 0) count += 1;
+  }
+  return count;
 }
