@@ -42,29 +42,23 @@ type DashboardData = {
   performance: { user_id: string; name: string; calls: number; meetings: number; talk_time: number }[];
   activity: { key: string; label: string; calls: number; connected: number }[];
 };
-type BudgetEntry = {
-  id: string; user_id: string; user_name: string; role: Profile["role"]; campaign_id: string | null;
-  campaign_name: string | null; weekly_target: number; monthly_target: number;
-  activity_mode: "meeting" | "sale" | "both";
-  commission_per_meeting: number; commission_per_sale: number;
-  weekly_meeting_target: number; weekly_sale_target: number;
-  weekly_meetings: number; monthly_meetings: number; weekly_sales: number; monthly_sales: number;
-  monthly_commission: number; expected_monthly_commission: number; updated_at: string;
+type BudgetPerson = {
+  user_id: string; user_name: string; role: Profile["role"]; source: "custom" | "default";
+  weekly_meeting_target: number; weekly_sale_target: number; commission_per_meeting: number; commission_per_sale: number;
+  meetings_per_day: number; monthly_meeting_target: number; monthly_sale_target: number;
+  today_meetings: number; weekly_meetings: number; monthly_meetings: number;
+  today_sales: number; weekly_sales: number; monthly_sales: number;
+  monthly_commission: number; expected_monthly_commission: number; updated_at: string | null;
 };
 type BudgetActivity = { id: string; user_id: string; campaign_id: string; event_type: "meeting" | "sale" | "upsell"; created_at: string };
-type CampaignBudgetSettings = {
-  activity_mode: "meeting" | "sale" | "both";
-  commission_per_meeting: number;
-  commission_per_sale: number;
-  weekly_meeting_target: number;
-  weekly_sale_target: number;
-};
+type BudgetSettings = { meetings_per_day: number; commission_per_meeting: number; sales_per_week: number; commission_per_sale: number };
 type BudgetReport = {
-  data: BudgetEntry[];
-  members: { id: string; full_name: string; role: Profile["role"] }[];
+  people: BudgetPerson[];
+  defaults: { meetings_per_day: number; commission_per_meeting: number };
   campaigns: { id: string; name: string }[];
   activities: BudgetActivity[];
   system_fee?: { fee_dkk: number; users: Record<string, { gross: number; covered: number; own: number }> };
+  period: { workdays: number };
 };
 type Milestone = { user_id: string; name: string; company_name: string; ready_at: string; unlocked: boolean; own: boolean };
 type TeamMessage = {
@@ -355,7 +349,6 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         setTeam(result.data);
         setTeamCampaigns(result.campaigns);
         setTeamLeadLists(result.lead_lists);
-        setBudgetReport(await api<BudgetReport>("/api/budgets"));
       } else if (activePage === "messages") {
         const { data } = await api<{ data: TeamMessage[] }>("/api/messages");
         setTeamMessages(data);
@@ -1026,30 +1019,27 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
     }
   }
 
-  async function saveBudget(userId: string, campaignId: string | null, weekly: number, monthly: number) {
+  async function saveBudget(userId: string, settings: BudgetSettings) {
     try {
-      await api("/api/budgets", {
-        method: "PUT",
-        body: JSON.stringify({ user_id: userId, campaign_id: campaignId, weekly_target: weekly, monthly_target: monthly }),
-      });
-      setNotice("Budgetmålet er gemt.");
-      const refreshPage = page === "team" ? "team" : "dashboard";
-      void loadPageData(refreshPage);
+      await api("/api/budgets", { method: "PUT", body: JSON.stringify({ user_id: userId, ...settings }) });
+      setNotice("Budgettet er gemt.");
+      setBudgetReport(await api<BudgetReport>("/api/budgets"));
+      return true;
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Budgetmålet kunne ikke gemmes.");
+      setError(saveError instanceof Error ? saveError.message : "Budgettet kunne ikke gemmes.");
+      return false;
     }
   }
 
-  async function saveCampaignBudget(userId: string, campaignId: string, settings: CampaignBudgetSettings) {
+  async function resetBudget(userId: string) {
     try {
-      await api("/api/budgets", {
-        method: "PUT",
-        body: JSON.stringify({ user_id: userId, campaign_id: campaignId, ...settings }),
-      });
-      setNotice("Budget og provisionsaftale er gemt.");
+      await api(`/api/budgets?user_id=${encodeURIComponent(userId)}`, { method: "DELETE" });
+      setNotice("Budgettet følger nu standarden.");
       setBudgetReport(await api<BudgetReport>("/api/budgets"));
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Budget og provision kunne ikke gemmes.");
+      return true;
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : "Budgettet kunne ikke nulstilles.");
+      return false;
     }
   }
 
@@ -1659,12 +1649,12 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
             : <div className="panel empty-panel"><p>{loading ? "Henter teamets tal …" : "Teamets tal kunne ikke hentes."}</p></div>)}
           {page === "dashboard" && profile.role !== "admin" && <DashboardView
             data={dashboard} loading={loading} name={greeting} role={profile.role} userId={user.id}
-            budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()} onSaveBudget={saveBudget}
+            budgets={budgetReport} setPage={setPage} onNewLead={() => void openLeadModal()}
           />}
           {page === "dashboard" && profile.role !== "admin" && <SellerFeedbackPanel meetings={meetings.filter((meeting) => meeting.user_id === user.id)} onOpenMeetings={() => setPage("meetings")} />}
           {page === "budget" && <BudgetView
             report={budgetReport} loading={loading} userId={user.id} role={profile.role}
-            onSave={saveCampaignBudget} onRecord={recordBudgetEvent}
+            onSave={saveBudget} onReset={resetBudget} onRecord={recordBudgetEvent}
           />}
           {page === "leads" && profile.role !== "salesperson" && <LeadsView leads={filteredLeads} total={leadsTotal} page={leadsPage} onPage={setLeadsPage} loading={loading} status={leadStatus} setStatus={updateLeadStatus} filters={leadFilters} setFilters={updateLeadFilters} members={team} profile={profile} onAdd={() => void openLeadModal()} onUpdate={updateLead} onDelete={deleteLead} onExport={() => exportCsv(filteredLeads, "nordcall-virksomheder.csv")} />}
           {page === "dialer" && <DialerView
@@ -1704,7 +1694,6 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
           />}
           {page === "team" && <TeamView
             members={team} loading={loading} role={profile.role} campaigns={teamCampaigns} leadLists={teamLeadLists}
-            budgets={budgetReport} onSaveBudget={saveBudget}
             onInvite={() => setModal("invite")}
             onSave={async (memberId, fullName, role, campaignIds, leadListIds, callRecordingEnabled, accessMode, canDialManual) => {
               try {
@@ -1833,11 +1822,11 @@ function Brand({ compact = false }: { compact?: boolean }) {
   return <div className={`brand ${compact ? "brand-compact" : ""}`}><span className="brand-mark"><span /><span /><span /></span><span className="brand-name">nordcall<span>.</span></span></div>;
 }
 
-function DashboardView({ data, loading, name, role, userId, budgets, setPage, onNewLead, onSaveBudget }: {
+function DashboardView({ data, loading, name, role, userId, budgets, setPage, onNewLead }: {
   data: DashboardData | null; loading: boolean; name: string; role: Profile["role"]; userId: string;
   budgets: BudgetReport | null; setPage: (page: Page) => void; onNewLead: () => void;
-  onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
+  const budget = budgets?.people.find((person) => person.user_id === userId);
   const metrics = [
     { label: "Opkald i dag", value: data?.calls ?? 0, icon: PhoneCall, tone: "blue", meta: `${data?.connected ?? 0} forbundne` },
     { label: "Samtaler", value: data?.conversations ?? 0, icon: Activity, tone: "violet", meta: "Reelle dialoger" },
@@ -1856,7 +1845,7 @@ function DashboardView({ data, loading, name, role, userId, budgets, setPage, on
         <div className="metric-meta"><span className={index === 0 ? "meta-positive" : ""}>{index === 0 ? <ArrowUpRight size={13} /> : <span className="meta-dot" />}{meta}</span></div>
       </div>)}
     </section>
-    {budgets && <PersonalBudgetCard report={budgets} userId={userId} onSave={onSaveBudget} />}
+    {budget && <PersonalBudgetCard person={budget} onOpen={() => setPage("budget")} />}
     <section className="dashboard-columns">
       <div className="panel activity-panel">
         <div className="panel-heading"><div><span className="panel-eyebrow">DIT TEMPO</span><h2>Opkaldsaktivitet</h2></div><button className="select-button">Denne uge <ChevronDown size={14} /></button></div>
@@ -1909,6 +1898,7 @@ function AdminHome({ name, setPage }: { name: string; setPage: (page: Page) => v
     { page: "partners", title: "Samarbejdspartnere", text: "Partnere, kampagner og kundelogins.", icon: Handshake },
     { page: "feedback", title: "Mødefeedback", text: "Overskredne møder og partnernes status.", icon: ClipboardCheck },
     { page: "earnings", title: "Godkend indtjening", text: "Godkend møder, salg og mersalg.", icon: BadgeCheck },
+    { page: "budget", title: "Budgetter", text: "Møder pr. dag og provision for hver bruger.", icon: Target },
   ];
   return <section className="admin-home">
     <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Hej {name}</h1>
@@ -1981,110 +1971,27 @@ function SystemFeeCard({ fee, split, own }: { fee: number; split?: { gross: numb
   </section>;
 }
 
-function BudgetView({ report, loading, userId, role, onSave, onRecord }: {
+function BudgetView({ report, loading, userId, role, onSave, onReset, onRecord }: {
   report: BudgetReport | null; loading: boolean; userId: string; role: Profile["role"];
-  onSave: (userId: string, campaignId: string, settings: CampaignBudgetSettings) => void;
+  onSave: (userId: string, settings: BudgetSettings) => Promise<boolean>;
+  onReset: (userId: string) => Promise<boolean>;
   onRecord: (campaignId: string, eventType: "meeting" | "sale" | "upsell") => void;
 }) {
-  const [selectedUserId, setSelectedUserId] = useState(userId);
-  const [campaignId, setCampaignId] = useState("");
-  const [activityMode, setActivityMode] = useState<CampaignBudgetSettings["activity_mode"]>("meeting");
-  const [weeklyMeetings, setWeeklyMeetings] = useState("0");
-  const [weeklySales, setWeeklySales] = useState("0");
-  const [meetingCommission, setMeetingCommission] = useState("0");
-  const [saleCommission, setSaleCommission] = useState("0");
-  const campaigns = useMemo(() => report?.campaigns ?? [], [report?.campaigns]);
-  const members = report?.members ?? [];
-  const target = report?.data.find((item) => item.user_id === selectedUserId && item.campaign_id === campaignId);
-
-  useEffect(() => {
-    if (role !== "admin") setSelectedUserId(userId);
-  }, [role, userId]);
-  useEffect(() => {
-    if (!campaigns.some((campaign) => campaign.id === campaignId)) setCampaignId(campaigns[0]?.id ?? "");
-  }, [campaignId, campaigns]);
-  useEffect(() => {
-    setActivityMode(target?.activity_mode ?? "meeting");
-    setWeeklyMeetings(String(target?.weekly_meeting_target ?? target?.weekly_target ?? 0));
-    setWeeklySales(String(target?.weekly_sale_target ?? 0));
-    setMeetingCommission(String(target?.commission_per_meeting ?? 0));
-    setSaleCommission(String(target?.commission_per_sale ?? 0));
-  }, [target]);
-
-  const displayEvents = activityMode === "both" ? ["meeting", "sale"] as const : [activityMode] as const;
-  const expectedMonthly = (Number(weeklyMeetings) * Number(meetingCommission)
-    + Number(weeklySales) * Number(saleCommission)) * (52 / 12);
-  const visibleActivities = (report?.activities ?? []).filter((activity) =>
-    activity.campaign_id === campaignId && (role === "admin" ? activity.user_id === selectedUserId : activity.user_id === userId),
-  );
-  const userName = members.find((member) => member.id === selectedUserId)?.full_name || "Bruger";
-
+  const person = report?.people.find((item) => item.user_id === userId);
+  if (role === "admin") {
+    return <div className="view budget-view">
+      <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION · BUDGETTER</span><h1>Budgetter</h1><p>Sæt møder pr. dag og provision for hver bruger. Sælgerne ser deres budget på Overblik og under Budget.</p></div><Target size={21} className="heading-muted" /></div>
+      {report ? <TeamBudgetAdmin report={report} onSave={onSave} onReset={onReset} />
+        : <div className="panel empty-panel"><p>{loading ? "Henter budgetter …" : "Budgetterne kunne ikke hentes."}</p></div>}
+    </div>;
+  }
   return <div className="view budget-view">
-    <div className="page-heading"><div><span className="eyebrow">DIT FOKUS · DINE RESULTATER</span><h1>Budget</h1><p>Sæt et enkelt ugemål, følg aktiviteterne live, og se hvad det giver i provision.</p></div><Target size={21} className="heading-muted" /></div>
-    {!campaigns.length && !loading ? <div className="panel empty-panel"><EmptyInline title="Ingen kampagner endnu" description="Når du er tildelt en kampagne, kan du sætte dit mål og din provisionssats her." /></div> : <>
-      <section className="panel budget-setup">
-        <div className="budget-setup-heading"><span className="panel-eyebrow">ENKEL OPSÆTNING</span><h2>Vælg kampagne og aftal dit mål</h2><p>Målet er pr. uge. Månedsprognosen beregnes automatisk ud fra 52/12 uger.</p></div>
-        <form className="campaign-budget-form" onSubmit={(event) => {
-          event.preventDefault();
-          if (!campaignId) return;
-          onSave(selectedUserId, campaignId, {
-            activity_mode: activityMode,
-            weekly_meeting_target: activityMode === "sale" ? 0 : Number(weeklyMeetings),
-            weekly_sale_target: activityMode === "meeting" ? 0 : Number(weeklySales),
-            commission_per_meeting: activityMode === "sale" ? 0 : Number(meetingCommission),
-            commission_per_sale: activityMode === "meeting" ? 0 : Number(saleCommission),
-          });
-        }}>
-          {role === "admin" && <label>Bruger<select value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-            {members.map((member) => <option key={member.id} value={member.id}>{member.full_name || "Uden navn"} · {friendlyRole(member.role)}</option>)}
-          </select></label>}
-          <label>Kampagne<select required value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-            <option value="">Vælg kampagne …</option>{campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
-          </select></label>
-          <label>Følg aktivitet<select value={activityMode} onChange={(event) => setActivityMode(event.target.value as CampaignBudgetSettings["activity_mode"])}>
-            <option value="meeting">Møder</option><option value="sale">Salg</option><option value="both">Møder og salg</option>
-          </select></label>
-          {activityMode !== "sale" && <label>Provision pr. møde (kr.)<input required type="number" min="0" max="1000000" step="0.01" value={meetingCommission} onChange={(event) => setMeetingCommission(event.target.value)} /></label>}
-          {activityMode !== "meeting" && <label>Provision pr. salg (kr.)<input required type="number" min="0" max="1000000" step="0.01" value={saleCommission} onChange={(event) => setSaleCommission(event.target.value)} /></label>}
-          {activityMode !== "sale" && <label>Møder pr. uge<input required type="number" min="0" max="10000" step="1" value={weeklyMeetings} onChange={(event) => setWeeklyMeetings(event.target.value)} /></label>}
-          {activityMode !== "meeting" && <label>Salg pr. uge<input required type="number" min="0" max="10000" step="1" value={weeklySales} onChange={(event) => setWeeklySales(event.target.value)} /></label>}
-          <div className="budget-form-footer"><span>Forventet provision ved målopfyldelse: <strong>{formatMoney(expectedMonthly)} / måned</strong></span>
-            <button className="button button-primary button-small" disabled={!campaignId}><Check size={14} /> Gem mit budget</button>
-          </div>
-        </form>
-      </section>
-      <SystemFeeCard fee={report?.system_fee?.fee_dkk ?? 500} split={report?.system_fee?.users[selectedUserId]} own={selectedUserId === userId} />
-      {target ? <section className="budget-results">
-        <div className="budget-results-heading"><div><span className="panel-eyebrow">{userName} · {target.campaign_name || "Kampagne"}</span><h2>Din fremgang</h2></div><span className="live-tag"><i /> Opdateret live</span></div>
-        <div className="budget-kpi-grid">
-          <article className="panel budget-commission-card"><span>Provision denne måned</span><strong>{formatMoney(target.monthly_commission)}</strong><small>{target.monthly_meetings + target.monthly_sales} registrerede aktiviteter</small></article>
-          <article className="panel budget-commission-card budget-commission-forecast"><span>Hvis du holder dit ugemål</span><strong>{formatMoney(target.expected_monthly_commission)}</strong><small>Forventet provision pr. måned</small></article>
-          {displayEvents.map((eventType) => {
-            const meeting = eventType === "meeting";
-            const current = meeting ? target.weekly_meetings : target.weekly_sales;
-            const goal = meeting ? target.weekly_meeting_target : target.weekly_sale_target;
-            const monthly = meeting ? target.monthly_meetings : target.monthly_sales;
-            const monthlyGoal = Math.round(goal * 52 / 12);
-            const percent = goal ? Math.min(100, Math.round(current / goal * 100)) : 0;
-            return <article className="panel budget-activity-card" key={eventType}>
-              <div className="budget-activity-title"><span>{meeting ? <CalendarDays size={16} /> : <CheckCircle2 size={16} />}</span><div><strong>{meeting ? "Møder" : "Salg"}</strong><small>{current} / {goal} denne uge</small></div></div>
-              <div className="budget-progress-track"><i style={{ width: `${percent}%` }} /></div>
-              <div className="budget-activity-foot"><span>{percent}% af ugemålet</span><span>{monthly} / {monthlyGoal} denne måned</span></div>
-              <button className="button button-secondary button-small" onClick={() => onRecord(campaignId, eventType)}>+ Registrer {meeting ? "møde" : "salg"}</button>
-              {!meeting && <button className="button button-secondary button-small" title="Salg til en eksisterende kunde. Giver ekstra i Magnora Empire, når det godkendes." onClick={() => onRecord(campaignId, "upsell")}>+ Registrer mersalg</button>}
-            </article>;
-          })}
-        </div>
-        <section className="panel budget-activity-list">
-          <div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Det, der tæller med</h2></div></div>
-          {visibleActivities.length ? visibleActivities.slice(0, 8).map((activity) => <div className="budget-activity-row" key={activity.id}>
-            <span className={`activity-dot activity-${activity.event_type}`} />
-            <strong>{activity.event_type === "meeting" ? "Møde" : activity.event_type === "upsell" ? "Mersalg" : "Salg"}</strong>
-            <time>{formatDate(activity.created_at, { day: "numeric", month: "short", year: "numeric" })} · {formatTime(activity.created_at)}</time>
-          </div>) : <p className="budget-no-activity">Dine møder og salg bliver vist her, når de registreres.</p>}
-          <small className="budget-duplicate-note">Møder booket under Møder registreres også automatisk. Registrér ikke det samme møde to gange.</small>
-        </section>
-      </section> : <div className="panel budget-unconfigured"><Target size={18} /><p>Vælg aktivitetstype, ugemål og provisionssats, og gem opsætningen for at begynde.</p></div>}
+    <div className="page-heading"><div><span className="eyebrow">DIT FOKUS · DINE RESULTATER</span><h1>Budget</h1><p>Dit mål og din provision. Tallene opdateres, hver gang du booker et møde.</p></div><span className="live-tag"><i /> Opdateret live</span></div>
+    {!report || !person ? <div className="panel empty-panel"><p>{loading ? "Henter dit budget …" : "Dit budget kunne ikke hentes."}</p></div> : <>
+      <BudgetHero person={person} />
+      <BudgetGoals person={person} />
+      <SystemFeeCard fee={report?.system_fee?.fee_dkk ?? 500} split={report?.system_fee?.users[userId]} own />
+      <BudgetActivityPanel report={report} userId={userId} sales={person.weekly_sale_target > 0 || person.commission_per_sale > 0} onRecord={onRecord} />
     </>}
   </div>;
 }
@@ -2095,41 +2002,212 @@ function formatMoney(amount: number) {
   }).format(amount);
 }
 
-function PersonalBudgetCard({ report, userId, onSave }: {
-  report: BudgetReport; userId: string; onSave: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
-}) {
-  const [campaignId, setCampaignId] = useState("");
-  const target = report.data.find((item) => item.user_id === userId && item.campaign_id === (campaignId || null));
-  const [weekly, setWeekly] = useState("0");
-  const [monthly, setMonthly] = useState("0");
-  useEffect(() => {
-    setWeekly(String(target?.weekly_target ?? 0));
-    setMonthly(String(target?.monthly_target ?? 0));
-  }, [target?.id, target?.weekly_target, target?.monthly_target]);
-  const weeklyProgress = target?.weekly_target ? Math.min(100, Math.round(target.weekly_meetings / target.weekly_target * 100)) : 0;
-  const monthlyProgress = target?.monthly_target ? Math.min(100, Math.round(target.monthly_meetings / target.monthly_target * 100)) : 0;
-  return <section className="panel personal-budget">
-    <div className="budget-heading"><div><span className="panel-eyebrow">DIT FOKUS · BOOKEDE MØDER</span><h2>Dit budget</h2><p>Følg dine egne aftaler uge for uge og måned for måned.</p></div><Target size={19} /></div>
-    <div className="personal-budget-grid">
-      <div className="budget-progress-card"><div><strong>Ugens mål</strong><span>{target?.weekly_meetings ?? 0} / {target?.weekly_target ?? 0} møder</span></div>
-        <div className="budget-progress-track"><i style={{ width: `${weeklyProgress}%` }} /></div><small>{target?.weekly_target ? `${weeklyProgress}% gennemført` : "Aftal et ugemål med din leder"}</small>
-      </div>
-      <div className="budget-progress-card"><div><strong>Månedens mål</strong><span>{target?.monthly_meetings ?? 0} / {target?.monthly_target ?? 0} møder</span></div>
-        <div className="budget-progress-track budget-progress-month"><i style={{ width: `${monthlyProgress}%` }} /></div><small>{target?.monthly_target ? `${monthlyProgress}% gennemført` : "Sæt et mål sammen med din leder"}</small>
-      </div>
+function formatCount(value: number) {
+  return value.toLocaleString("da-DK", { maximumFractionDigits: 1 });
+}
+
+function budgetPercent(value: number, target: number) {
+  return target > 0 ? Math.min(100, Math.round(value / target * 100)) : 0;
+}
+
+// Commission this month against what the agreed goal pays, plus the agreement itself.
+function BudgetHero({ person }: { person: BudgetPerson }) {
+  const percent = budgetPercent(person.monthly_commission, person.expected_monthly_commission);
+  const sales = person.weekly_sale_target > 0 || person.commission_per_sale > 0;
+  return <section className="panel budget-hero">
+    <div className="budget-hero-main">
+      <span className="panel-eyebrow">PROVISION DENNE MÅNED</span>
+      <strong className="budget-hero-amount">{formatMoney(person.monthly_commission)}</strong>
+      <span className="budget-hero-sub">af {formatMoney(person.expected_monthly_commission)}, når du rammer dit mål</span>
+      <div className="budget-progress-track budget-progress-month"><i style={{ width: `${percent}%` }} /></div>
+      <small>{percent}% af månedens mål</small>
     </div>
-    <form className="budget-editor" onSubmit={(event) => {
-      event.preventDefault();
-      onSave(userId, campaignId || null, Number(weekly), Number(monthly));
-    }}>
-      <label>Budget for<select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-        <option value="">Alle kampagner samlet</option>{report.campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
-      </select></label>
-      <label>Ugentligt mål<input required type="number" min="0" max="10000" step="1" value={weekly} onChange={(event) => setWeekly(event.target.value)} /></label>
-      <label>Månedligt mål<input required type="number" min="0" max="50000" step="1" value={monthly} onChange={(event) => setMonthly(event.target.value)} /></label>
-      <button className="button button-secondary button-small"><Check size={14} /> Gem budget</button>
-    </form>
+    <div className="budget-agreement">
+      <span className="panel-eyebrow">DIN AFTALE</span>
+      <dl>
+        <div><dt>Møder pr. dag</dt><dd>{formatCount(person.meetings_per_day)}</dd></div>
+        <div><dt>Provision pr. møde</dt><dd>{formatMoney(person.commission_per_meeting)}</dd></div>
+        {sales && <div><dt>Salg pr. uge</dt><dd>{person.weekly_sale_target}</dd></div>}
+        {sales && <div><dt>Provision pr. salg</dt><dd>{formatMoney(person.commission_per_sale)}</dd></div>}
+      </dl>
+      <p className="budget-source">{person.source === "default"
+        ? "Standardbudget. Din leder kan tilpasse det til dig."
+        : "Aftalt med din leder."}</p>
+    </div>
   </section>;
+}
+
+function BudgetGoals({ person }: { person: BudgetPerson }) {
+  const sales = person.weekly_sale_target > 0;
+  return <>
+    <div className="budget-goal-grid">
+      <BudgetGoal label="I dag" value={person.today_meetings} target={person.meetings_per_day} unit="møder" />
+      <BudgetGoal label="Denne uge" value={person.weekly_meetings} target={person.weekly_meeting_target} unit="møder" />
+      <BudgetGoal label="Denne måned" value={person.monthly_meetings} target={person.monthly_meeting_target} unit="møder" tone="month" />
+    </div>
+    {sales && <div className="budget-goal-grid budget-goal-grid-two">
+      <BudgetGoal label="Salg denne uge" value={person.weekly_sales} target={person.weekly_sale_target} unit="salg" />
+      <BudgetGoal label="Salg denne måned" value={person.monthly_sales} target={person.monthly_sale_target} unit="salg" tone="month" />
+    </div>}
+  </>;
+}
+
+function BudgetGoal({ label, value, target, unit, tone = "week", compact = false }: {
+  label: string; value: number; target: number; unit: string; tone?: "week" | "month"; compact?: boolean;
+}) {
+  const percent = budgetPercent(value, target);
+  const missing = Math.max(0, Math.ceil(target - value));
+  const done = target > 0 && missing === 0;
+  return <article className={`${compact ? "" : "panel "}budget-goal${done ? " budget-goal-done" : ""}`}>
+    <span className="budget-goal-label">{label}</span>
+    <strong className="budget-goal-value">{value}<small> / {formatCount(target)} {unit}</small></strong>
+    <div className={`budget-progress-track${tone === "month" ? " budget-progress-month" : ""}`}><i style={{ width: `${percent}%` }} /></div>
+    <span className="budget-goal-foot">{target <= 0 ? "Intet mål sat" : done ? <><CheckCircle2 size={13} /> Mål nået</> : `${missing} ${missing === 1 ? unit.replace(/er$/, "e") : unit} mangler`}</span>
+  </article>;
+}
+
+function BudgetActivityPanel({ report, userId, sales, onRecord }: {
+  report: BudgetReport; userId: string; sales: boolean;
+  onRecord: (campaignId: string, eventType: "meeting" | "sale" | "upsell") => void;
+}) {
+  const [campaignId, setCampaignId] = useState(report.campaigns[0]?.id ?? "");
+  useEffect(() => {
+    if (!report.campaigns.some((campaign) => campaign.id === campaignId)) setCampaignId(report.campaigns[0]?.id ?? "");
+  }, [campaignId, report.campaigns]);
+  const campaignName = new Map(report.campaigns.map((campaign) => [campaign.id, campaign.name]));
+  const activities = report.activities.filter((activity) => activity.user_id === userId).slice(0, 8);
+  const label = { meeting: "Møde", sale: "Salg", upsell: "Mersalg" } as const;
+  return <section className="panel budget-activity-list">
+    <div className="panel-heading"><div><span className="panel-eyebrow">SENESTE AKTIVITET</span><h2>Det, der tæller med</h2></div></div>
+    {activities.length ? <div className="budget-activity-rows">{activities.map((activity) => <div className="budget-activity-row" key={activity.id}>
+      <span className={`activity-dot activity-${activity.event_type}`} />
+      <span className="budget-activity-name"><strong>{label[activity.event_type]}</strong><small>{campaignName.get(activity.campaign_id) ?? "Kampagne"}</small></span>
+      <time>{formatDate(activity.created_at, { day: "numeric", month: "short" })} · {formatTime(activity.created_at)}</time>
+    </div>)}</div> : <p className="budget-no-activity">Dine møder og salg bliver vist her, når de registreres.</p>}
+    {report.campaigns.length > 0 && <div className="budget-record">
+      <span className="budget-record-title">Registrér manuelt</span>
+      <div className="budget-record-controls">
+        <select aria-label="Kampagne" value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
+          {report.campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
+        </select>
+        <button className="button button-secondary button-small" disabled={!campaignId} onClick={() => onRecord(campaignId, "meeting")}><Plus size={14} /> Møde</button>
+        {sales && <button className="button button-secondary button-small" disabled={!campaignId} onClick={() => onRecord(campaignId, "sale")}><Plus size={14} /> Salg</button>}
+        <button className="button button-secondary button-small" disabled={!campaignId} title="Salg til en eksisterende kunde. Giver ekstra i Magnora Empire, når det godkendes." onClick={() => onRecord(campaignId, "upsell")}><Plus size={14} /> Mersalg</button>
+      </div>
+      <small className="budget-duplicate-note">Møder, du booker under Møder, tæller automatisk med. Registrér kun møder, der er booket uden for systemet.</small>
+    </div>}
+  </section>;
+}
+
+// Dashboard summary: the same numbers as the Budget page.
+function PersonalBudgetCard({ person, onOpen }: { person: BudgetPerson; onOpen: () => void }) {
+  return <section className="panel personal-budget">
+    <div className="budget-heading">
+      <div><span className="panel-eyebrow">DIT BUDGET · {formatCount(person.meetings_per_day)} MØDER OM DAGEN</span>
+        <h2>{formatMoney(person.monthly_commission)} <small>af {formatMoney(person.expected_monthly_commission)} denne måned</small></h2>
+        <p>{formatMoney(person.commission_per_meeting)} pr. møde{person.source === "default" ? " · standardbudget" : ""}</p></div>
+      <button className="text-button" onClick={onOpen}>Se budget <ArrowRight size={14} /></button>
+    </div>
+    <div className="budget-goal-grid">
+      <BudgetGoal compact label="I dag" value={person.today_meetings} target={person.meetings_per_day} unit="møder" />
+      <BudgetGoal compact label="Denne uge" value={person.weekly_meetings} target={person.weekly_meeting_target} unit="møder" />
+      <BudgetGoal compact label="Denne måned" value={person.monthly_meetings} target={person.monthly_meeting_target} unit="møder" tone="month" />
+    </div>
+  </section>;
+}
+
+function TeamBudgetAdmin({ report, onSave, onReset }: {
+  report: BudgetReport;
+  onSave: (userId: string, settings: BudgetSettings) => Promise<boolean>;
+  onReset: (userId: string) => Promise<boolean>;
+}) {
+  const people = [...report.people].sort((left, right) =>
+    Number(left.role === "admin") - Number(right.role === "admin") || left.user_name.localeCompare(right.user_name, "da"));
+  const totalCommission = people.reduce((sum, person) => sum + person.monthly_commission, 0);
+  const totalMeetings = people.reduce((sum, person) => sum + person.monthly_meetings, 0);
+  const totalTarget = people.reduce((sum, person) => sum + person.monthly_meeting_target, 0);
+  return <>
+    <section className="panel budget-admin-summary">
+      <div><span className="panel-eyebrow">STANDARDBUDGET</span>
+        <strong>{formatCount(report.defaults.meetings_per_day)} møder om dagen · {formatMoney(report.defaults.commission_per_meeting)} pr. møde</strong>
+        <small>Gælder alle, indtil du tilpasser budgettet for den enkelte. {report.period.workdays} arbejdsdage denne måned.</small></div>
+      <dl>
+        <div><dt>Møder denne måned</dt><dd>{totalMeetings} <small>/ {totalTarget}</small></dd></div>
+        <div><dt>Provision denne måned</dt><dd>{formatMoney(totalCommission)}</dd></div>
+      </dl>
+    </section>
+    <div className="budget-admin-list">{people.map((person, index) =>
+      <BudgetAdminRow key={person.user_id} person={person} index={index} workdays={report.period.workdays} onSave={onSave} onReset={onReset} />)}
+      {!people.length && <div className="panel empty-panel"><EmptyInline title="Ingen brugere endnu" description="Invitér sælgere under Team for at give dem et budget." /></div>}
+    </div>
+  </>;
+}
+
+function BudgetAdminRow({ person, index, workdays, onSave, onReset }: {
+  person: BudgetPerson; index: number; workdays: number;
+  onSave: (userId: string, settings: BudgetSettings) => Promise<boolean>;
+  onReset: (userId: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [perDay, setPerDay] = useState("");
+  const [meetingRate, setMeetingRate] = useState("");
+  const [salesPerWeek, setSalesPerWeek] = useState("");
+  const [saleRate, setSaleRate] = useState("");
+  const open = () => {
+    setPerDay(String(person.meetings_per_day));
+    setMeetingRate(String(person.commission_per_meeting));
+    setSalesPerWeek(String(person.weekly_sale_target));
+    setSaleRate(String(person.commission_per_sale));
+    setEditing(true);
+  };
+  const run = async (action: () => Promise<boolean>) => {
+    setBusy(true);
+    try { if (await action()) setEditing(false); } finally { setBusy(false); }
+  };
+  // Mirrors the server: whole meetings per week, then the month's working days.
+  const preview = Math.round(Math.round(Number(perDay) * 5) / 5 * workdays) * Number(meetingRate)
+    + Math.round(Number(salesPerWeek) / 5 * workdays) * Number(saleRate);
+  const weekPercent = budgetPercent(person.weekly_meetings, person.weekly_meeting_target);
+  const monthPercent = budgetPercent(person.monthly_meetings, person.monthly_meeting_target);
+  return <article className={`panel budget-admin-row${editing ? " is-editing" : ""}`}>
+    <div className="budget-admin-head">
+      <div className={`avatar avatar-${index % 4}`}>{initials(person.user_name)}</div>
+      <span className="budget-admin-name"><strong>{person.user_name}</strong>
+        <small>{friendlyRole(person.role)} · <span className={`budget-badge budget-badge-${person.source}`}>{person.source === "default" ? "Standard" : "Tilpasset"}</span></small></span>
+      {!editing && <button className="button button-secondary button-small" onClick={open}><SlidersHorizontal size={14} /> Tilpas</button>}
+    </div>
+    <div className="budget-admin-figures">
+      <span><small>Aftale</small><strong>{formatCount(person.meetings_per_day)} møder/dag · {formatMoney(person.commission_per_meeting)}</strong></span>
+      <span><small>Uge</small><strong>{person.weekly_meetings} / {person.weekly_meeting_target}</strong>
+        <span className="budget-mini-progress budget-mini-week"><i style={{ width: `${weekPercent}%` }} /></span></span>
+      <span><small>Måned</small><strong>{person.monthly_meetings} / {person.monthly_meeting_target}</strong>
+        <span className="budget-mini-progress budget-mini-month"><i style={{ width: `${monthPercent}%` }} /></span></span>
+      <span><small>Provision</small><strong className="budget-admin-money">{formatMoney(person.monthly_commission)}</strong></span>
+    </div>
+    {editing && <form className="budget-admin-form" onSubmit={(event) => {
+      event.preventDefault();
+      void run(() => onSave(person.user_id, {
+        meetings_per_day: Number(perDay), commission_per_meeting: Number(meetingRate),
+        sales_per_week: Number(salesPerWeek), commission_per_sale: Number(saleRate),
+      }));
+    }}>
+      <label>Møder pr. dag<input required type="number" inputMode="decimal" min="0" max="100" step="0.2" value={perDay} onChange={(event) => setPerDay(event.target.value)} /></label>
+      <label>Provision pr. møde (kr.)<input required type="number" inputMode="numeric" min="0" max="1000000" step="1" value={meetingRate} onChange={(event) => setMeetingRate(event.target.value)} /></label>
+      <label>Salg pr. uge (valgfrit)<input type="number" inputMode="numeric" min="0" max="10000" step="1" value={salesPerWeek} onChange={(event) => setSalesPerWeek(event.target.value)} /></label>
+      <label>Provision pr. salg (kr.)<input type="number" inputMode="numeric" min="0" max="1000000" step="1" value={saleRate} onChange={(event) => setSaleRate(event.target.value)} /></label>
+      <div className="budget-admin-actions">
+        <span>Forventet ved målopfyldelse: <strong>{formatMoney(Number.isFinite(preview) ? preview : 0)} / måned</strong></span>
+        <div>
+          {person.source === "custom" && <button type="button" className="text-button" disabled={busy} onClick={() => {
+            if (window.confirm(`Sæt ${person.user_name} tilbage til standardbudgettet?`)) void run(() => onReset(person.user_id));
+          }}>Nulstil til standard</button>}
+          <button type="button" className="button button-secondary button-small" disabled={busy} onClick={() => setEditing(false)}>Annullér</button>
+          <button className="button button-primary button-small" disabled={busy}><Check size={14} /> Gem budget</button>
+        </div>
+      </div>
+    </form>}
+  </article>;
 }
 
 function LeadsView({ leads, total, page, onPage, loading, status, setStatus, filters, setFilters, members, profile, onAdd, onUpdate, onDelete, onExport }: {
@@ -2490,12 +2568,10 @@ function ImportView({ headers, rows, mapping, errors, progress, busy, campaigns,
   </div>;
 }
 
-function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInvite, onSave, onSaveBudget }: {
+function TeamView({ members, loading, role, campaigns, leadLists, onInvite, onSave }: {
   members: TeamMember[]; loading: boolean; role: Profile["role"]; campaigns: Campaign[]; leadLists: LeadList[];
-  budgets: BudgetReport | null;
   onInvite: () => void;
   onSave: (userId: string, fullName: string, role: ManagedRole, campaignIds: string[], leadListIds: string[], callRecordingEnabled: boolean, accessMode: AccessMode, canDialManual: boolean) => void;
-  onSaveBudget: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
 }) {
   return <div className="view">
     <div className="page-heading"><div><span className="eyebrow">ADMINISTRATION</span><h1>Brugere og tildelinger</h1><p>Administrér teamets profiler, kampagner og leadlister ét sted.</p></div>{role === "admin" && <button className="button button-primary" onClick={onInvite}><Plus size={16} /> Invitér kollega</button>}</div>
@@ -2506,61 +2582,7 @@ function TeamView({ members, loading, role, campaigns, leadLists, budgets, onInv
       : <div className="panel member-card" key={member.id}><div className={`avatar avatar-${index % 4}`}>{initials(member.full_name || "S")}</div><span className="member-info"><strong>{member.full_name || "Nyt teammedlem"}</strong><small>{friendlyRole(member.role)}</small></span><span className="member-joined">Med siden {formatDate(member.created_at, { month: "short", year: "numeric" })}</span><span className="member-online"><i /> Aktiv</span></div>)}
       {!members.length && <div className="panel empty-panel">{loading ? <span className="skeleton" /> : <EmptyInline title="Dit team begynder med dig" description="Invitér teammedlemmer for at tildele kampagner og leadlister." />}</div>}
     </div>
-    {role === "admin" && budgets && <TeamBudgetAdmin report={budgets} onSave={onSaveBudget} />}
     <div className="privacy-foot"><CheckCircle2 size={14} /> Brugere får kun adgang til tildelte kampagner, leadlister og leads. Rolleændringer kræver administratoradgang.</div>
-  </div>;
-}
-
-function TeamBudgetAdmin({ report, onSave }: {
-  report: BudgetReport; onSave: (userId: string, campaignId: string | null, weekly: number, monthly: number) => void;
-}) {
-  const initialUser = report.members.find((member) => member.role === "salesperson")?.id ?? report.members[0]?.id ?? "";
-  const [userId, setUserId] = useState(initialUser);
-  const [campaignId, setCampaignId] = useState("");
-  const target = report.data.find((item) => item.user_id === userId && item.campaign_id === (campaignId || null));
-  const [weekly, setWeekly] = useState("0");
-  const [monthly, setMonthly] = useState("0");
-  useEffect(() => {
-    if (!report.members.some((member) => member.id === userId)) setUserId(initialUser);
-  }, [report.members, userId, initialUser]);
-  useEffect(() => {
-    setWeekly(String(target?.weekly_target ?? 0));
-    setMonthly(String(target?.monthly_target ?? 0));
-  }, [target?.id, target?.weekly_target, target?.monthly_target]);
-  return <section className="panel team-budgets">
-    <div className="panel-heading"><div><span className="panel-eyebrow">MÅL OG MOTIVATION</span><h2>Uge- og månedsbudgetter</h2><p>Følg sælgernes aftalte mødemål samlet eller pr. kampagne.</p></div><Target size={18} className="heading-muted" /></div>
-    <form className="budget-editor admin-budget-editor" onSubmit={(event) => {
-      event.preventDefault();
-      if (userId) onSave(userId, campaignId || null, Number(weekly), Number(monthly));
-    }}>
-      <label>Sælger / booker<select required value={userId} onChange={(event) => setUserId(event.target.value)}>
-        <option value="">Vælg bruger …</option>{report.members.map((member) => <option key={member.id} value={member.id}>{member.full_name || "Uden navn"} · {friendlyRole(member.role)}</option>)}
-      </select></label>
-      <label>Kampagne<select value={campaignId} onChange={(event) => setCampaignId(event.target.value)}>
-        <option value="">Alle kampagner samlet</option>{report.campaigns.map((campaign) => <option key={campaign.id} value={campaign.id}>{campaign.name}</option>)}
-      </select></label>
-      <label>Ugentligt mål<input required type="number" min="0" max="10000" value={weekly} onChange={(event) => setWeekly(event.target.value)} /></label>
-      <label>Månedligt mål<input required type="number" min="0" max="50000" value={monthly} onChange={(event) => setMonthly(event.target.value)} /></label>
-      <button className="button button-primary button-small"><Check size={14} /> Gem aftalt budget</button>
-    </form>
-    <div className="budget-report-list">{report.members.map((member) => {
-      const targets = report.data.filter((item) => item.user_id === member.id);
-      return <article className="budget-person-report" key={member.id}>
-        <div className="budget-person-heading"><strong>{member.full_name || "Uden navn"}</strong><span>{friendlyRole(member.role)}</span></div>
-        {targets.length ? targets.map((item) => <div className="budget-report-row" key={item.id}>
-          <div className="budget-report-label"><span>{item.campaign_name ?? "Alle kampagner"}</span><small>{item.weekly_meetings}/{item.weekly_target} uge · {item.monthly_meetings}/{item.monthly_target} måned</small></div>
-          <BudgetProgress value={item.weekly_meetings} target={item.weekly_target} tone="week" />
-          <BudgetProgress value={item.monthly_meetings} target={item.monthly_target} tone="month" />
-        </div>) : <p className="budget-no-target">Intet budget aftalt endnu.</p>}
-      </article>;
-    })}</div>
-  </section>;
-}
-
-function BudgetProgress({ value, target, tone }: { value: number; target: number; tone: "week" | "month" }) {
-  const percent = target ? Math.min(100, Math.round(value / target * 100)) : 0;
-  return <div className={`budget-mini-progress budget-mini-${tone}`} aria-label={`${percent}% af budgetmål`}>
-    <i style={{ width: `${percent}%` }} />
   </div>;
 }
 

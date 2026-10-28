@@ -4,6 +4,7 @@ import { requireAdmin } from "@/lib/admin-context";
 import { isUuid } from "@/lib/game";
 import { periodBoundaries } from "@/lib/copenhagen-time";
 import { DEFAULT_SYSTEM_FEE_DKK, splitEarnings } from "@/lib/system-fee";
+import { resolveAgreement } from "@/lib/budget";
 
 const NOT_ADMIN = "Kun administratorer kan godkende salgsindtjening.";
 
@@ -11,7 +12,7 @@ type MeetingRow = { id: string; user_id: string; meeting_at: string; leads: { co
 type SaleRow = { id: string; user_id: string; campaign_id: string; event_type: "sale" | "upsell"; created_at: string };
 
 // Meetings and recorded sales awaiting (or with) an earnings decision. The
-// suggested DKK amount is the configured commission for the seller and campaign.
+// suggested DKK amount is the seller's budgeted commission.
 export async function GET() {
   const result = await requireAdmin(NOT_ADMIN);
   if ("response" in result) return result.response;
@@ -26,7 +27,7 @@ export async function GET() {
     admin.from("earning_approvals").select("user_id, source_type, source_id, status, amount_dkk, decided_at").eq("team_id", teamId),
     admin.from("profiles").select("id, full_name").eq("team_id", teamId),
     admin.from("campaigns").select("id, name").eq("team_id", teamId),
-    admin.from("sales_targets").select("user_id, campaign_id, commission_per_meeting, commission_per_sale").eq("team_id", teamId),
+    admin.from("sales_targets").select("user_id, campaign_id, weekly_target, weekly_meeting_target, weekly_sale_target, commission_per_meeting, commission_per_sale, updated_at").eq("team_id", teamId),
     admin.from("meeting_feedback").select("meeting_id, status").eq("team_id", teamId),
     admin.from("teams").select("seller_system_fee_dkk").eq("id", teamId).maybeSingle(),
   ]);
@@ -39,12 +40,9 @@ export async function GET() {
   const campaignNames = new Map((campaigns.data ?? []).map((campaign) => [campaign.id, campaign.name]));
   const decided = new Map((decisions.data ?? []).map((row) => [`${row.source_type}:${row.source_id}`, row]));
   const partnerStatus = new Map((feedback.data ?? []).map((row) => [row.meeting_id, row.status]));
-  const commission = (userId: string, campaignId: string | null, field: "commission_per_meeting" | "commission_per_sale") => {
-    const rows = targets.data ?? [];
-    const match = rows.find((row) => row.user_id === userId && row.campaign_id === campaignId)
-      ?? rows.find((row) => row.user_id === userId && row.campaign_id === null);
-    return Number(match?.[field] ?? 0);
-  };
+  // The same agreement the seller sees on the Budget page, standard rate included.
+  const commission = (userId: string, field: "commission_per_meeting" | "commission_per_sale") =>
+    resolveAgreement(targets.data ?? [], userId)[field];
   const decision = (key: string) => {
     const row = decided.get(key);
     return row ? { status: row.status, amount_dkk: Number(row.amount_dkk), decided_at: row.decided_at } : null;
@@ -55,13 +53,13 @@ export async function GET() {
       occurred_at: meeting.meeting_at, company_name: meeting.leads?.company_name ?? "Virksomhed",
       campaign_name: meeting.leads?.campaign_id ? campaignNames.get(meeting.leads.campaign_id) ?? "" : "",
       partner_status: partnerStatus.get(meeting.id) ?? null,
-      suggested_dkk: commission(meeting.user_id, meeting.leads?.campaign_id ?? null, "commission_per_meeting"),
+      suggested_dkk: commission(meeting.user_id, "commission_per_meeting"),
       decision: decision(`meeting:${meeting.id}`),
     })),
     ...((sales.data ?? []) as SaleRow[]).map((sale) => ({
       source_type: sale.event_type, source_id: sale.id, user_id: sale.user_id, seller_name: names.get(sale.user_id) ?? "Uden navn",
       occurred_at: sale.created_at, company_name: null, campaign_name: campaignNames.get(sale.campaign_id) ?? "",
-      partner_status: null, suggested_dkk: commission(sale.user_id, sale.campaign_id, "commission_per_sale"),
+      partner_status: null, suggested_dkk: commission(sale.user_id, "commission_per_sale"),
       decision: decision(`${sale.event_type}:${sale.id}`),
     })),
   ].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));
