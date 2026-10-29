@@ -60,16 +60,31 @@ export async function GET() {
   }
 
   if (env("TELNYX_API_KEY") && env("TELNYX_WEBRTC_CONNECTION_ID")) {
-    let ok = false;
-    try {
-      const response = await fetch(`https://api.telnyx.com/v2/credential_connections/${encodeURIComponent(process.env.TELNYX_WEBRTC_CONNECTION_ID!.trim())}`, {
-        headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY!.trim()}`, Accept: "application/json" },
-        signal: AbortSignal.timeout(10_000), cache: "no-store",
-      });
-      ok = response.ok;
-    } catch { /* reported as not ok */ }
-    checks.push({ key: "telnyx_connection", label: "Telnyx accepterer nøgle og headset-forbindelse", ok, required: true,
-      fix: "Kontrollér i Telnyx, at TELNYX_API_KEY er gyldig, og at TELNYX_WEBRTC_CONNECTION_ID er id'et på en Credential Connection med en Outbound Voice Profile." });
+    const telnyxGet = async (path: string) => {
+      try {
+        const response = await fetch(`https://api.telnyx.com/v2${path}`, {
+          headers: { Authorization: `Bearer ${process.env.TELNYX_API_KEY!.trim()}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(10_000), cache: "no-store",
+        });
+        if (!response.ok) return null;
+        return (await response.json() as { data?: Record<string, unknown> }).data ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const connection = await telnyxGet(`/credential_connections/${encodeURIComponent(process.env.TELNYX_WEBRTC_CONNECTION_ID!.trim())}`);
+    checks.push({ key: "telnyx_connection", label: "Telnyx accepterer nøgle og headset-forbindelse", ok: Boolean(connection), required: true,
+      fix: "Kontrollér i Telnyx, at TELNYX_API_KEY er gyldig, og at TELNYX_WEBRTC_CONNECTION_ID er id'et på en Credential Connection." });
+    if (connection) {
+      // Without an Outbound Voice Profile allowing Denmark, Telnyx drops every outbound call right after it starts.
+      const profileId = (connection.outbound as { outbound_voice_profile_id?: string | null } | undefined)?.outbound_voice_profile_id;
+      const voiceProfile = profileId ? await telnyxGet(`/outbound_voice_profiles/${encodeURIComponent(profileId)}`) : null;
+      const destinations = Array.isArray(voiceProfile?.whitelisted_destinations) ? voiceProfile.whitelisted_destinations as string[] : [];
+      checks.push({ key: "telnyx_outbound_profile", label: "Headset-forbindelsen må ringe ud", ok: Boolean(voiceProfile) && voiceProfile?.enabled !== false, required: true,
+        fix: "I Telnyx → Voice → SIP Connections: åbn headset-forbindelsen, gå til Outbound og vælg en Outbound Voice Profile." });
+      checks.push({ key: "telnyx_outbound_dk", label: "Udgående opkald til Danmark er tilladt", ok: destinations.includes("DK"), required: true,
+        fix: "I Telnyx → Voice → Outbound Voice Profiles: åbn profilen på headset-forbindelsen og tilføj Danmark (DK) under tilladte destinationer." });
+    }
   }
 
   // Per campaign: callable leads, caller number and sellers.
