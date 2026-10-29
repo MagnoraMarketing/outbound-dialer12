@@ -183,6 +183,31 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "S";
 }
 
+// Turns the provider's hangup cause into a call status and, when the call never
+// connected, a message for the seller. Administrators also get the SIP detail.
+function describeHangup(sdkCall: TelnyxCall, answered: boolean, isAdmin: boolean): { status: string; message: string } {
+  const cause = String(sdkCall.cause ?? "").toUpperCase();
+  const sipCode = Number(sdkCall.sipCode) || 0;
+  if (answered) return { status: "completed", message: "" };
+  if (cause === "USER_BUSY" || sipCode === 486 || sipCode === 600) return { status: "busy", message: "Nummeret er optaget." };
+  if (cause === "NO_ANSWER" || cause === "NO_USER_RESPONSE" || sipCode === 408 || sipCode === 480) {
+    return { status: "no_answer", message: "Der blev ikke svaret." };
+  }
+  if (cause === "ORIGINATOR_CANCEL" || sipCode === 487) return { status: "cancelled", message: "" };
+  const detail = [sipCode ? `SIP ${sipCode}` : "", sdkCall.sipReason ?? "", cause].filter(Boolean).join(" · ");
+  let message = "Opkaldet blev afvist, før det nåede frem. Kontakt din administrator.";
+  if (cause === "UNALLOCATED_NUMBER" || cause === "INVALID_NUMBER_FORMAT" || sipCode === 404 || sipCode === 484) {
+    message = "Telefonnummeret findes ikke eller er ugyldigt.";
+  } else if (isAdmin) {
+    message = sipCode === 403 || cause === "CALL_REJECTED"
+      ? "Telnyx afviste det udgående opkald. Tjek i Telnyx, at headset-forbindelsen (Credential Connection) har en Outbound Voice Profile, at landet er tilladt i profilen, og at det udgående nummer tilhører kontoen."
+      : "Telnyx afsluttede opkaldet, før det nåede frem.";
+  }
+  if (isAdmin && detail) message = `${message} (${detail})`;
+  console.error("Call ended before it connected", { cause, sipCode, sipReason: sdkCall.sipReason });
+  return { status: "failed", message };
+}
+
 export function Workspace({ configured, adminEntry = false }: { configured: boolean; adminEntry?: boolean }) {
   const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -270,6 +295,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   const voiceConnectionPromiseRef = useRef<Promise<TelnyxClient> | null>(null);
   const telnyxCallRef = useRef<TelnyxCall | null>(null);
   const callRecordIdRef = useRef<string | null>(null);
+  const callAnsweredRef = useRef(false);
+  const callEndedRef = useRef(false);
   const callRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingCallIdRef = useRef<string | null>(null);
@@ -586,12 +613,21 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
         const sdkCall = notification.call;
         if (notification.type !== "callUpdate" || !sdkCall || sdkCall.id !== telnyxCallRef.current?.id) return;
         const state = String(sdkCall.state).toLocaleLowerCase();
-        const status = ["requesting", "trying", "1", "2"].includes(state) ? "initiated"
-          : ["ringing", "4"].includes(state) ? "ringing"
+        let status = ["requesting", "trying", "1", "2"].includes(state) ? "initiated"
+          : ["ringing", "early", "4", "6"].includes(state) ? "ringing"
             : ["active", "7"].includes(state) ? "answered"
               : ["hangup", "destroy", "purge", "9", "10", "11"].includes(state) ? "completed" : null;
         const callId = callRecordIdRef.current;
         if (!status || !callId) return;
+        if (status === "answered") callAnsweredRef.current = true;
+        if (status === "completed") {
+          // Hangup, destroy and purge all arrive for one call; only the first counts.
+          if (callEndedRef.current) return;
+          callEndedRef.current = true;
+          const ended = describeHangup(sdkCall, callAnsweredRef.current, profile?.role === "admin");
+          status = ended.status;
+          if (ended.message) setError(ended.message);
+        }
         if (status === "answered" && profile?.call_recording_enabled) {
           try {
             startCallRecording(callId, sdkCall);
@@ -725,6 +761,8 @@ export function Workspace({ configured, adminEntry = false }: { configured: bool
   async function startWebRtcCall(phone: string, leadId?: string) {
     callRecordIdRef.current = null;
     telnyxCallRef.current = null;
+    callAnsweredRef.current = false;
+    callEndedRef.current = false;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Denne browser kan ikke bruge mikrofonen. Åbn Nordcall via HTTPS i en understøttet browser.");
     }
