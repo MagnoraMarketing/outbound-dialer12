@@ -51,8 +51,11 @@ export async function DELETE(request: Request) {
   const { data: user } = await admin.from("partner_users").select("user_id, partner_id, email")
     .eq("user_id", userId).eq("team_id", context.profile.team_id).maybeSingle();
   if (!user) return apiError("Login findes ikke.", 404);
-  // Partner logins are created by this route only, so removing the auth user is safe.
-  const { error } = await admin.auth.admin.deleteUser(userId);
+  // A login that is also a team member keeps its auth user; only the portal access is removed.
+  const { data: profile } = await admin.from("profiles").select("id").eq("id", userId).maybeSingle();
+  const { error } = profile
+    ? await admin.from("partner_users").delete().eq("user_id", userId)
+    : await admin.auth.admin.deleteUser(userId);
   if (error) {
     console.error("Partner login deletion failed", error.message);
     return apiError("Login kunne ikke slettes.", 500);
